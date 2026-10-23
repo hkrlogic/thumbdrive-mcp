@@ -1,16 +1,10 @@
 /**
  * HTTP surface: /healthz and the Streamable HTTP MCP endpoint at /mcp.
- * Order of checks on /mcp: Host and Origin, transport security, key, rate
- * limit, body size. Only then does the request reach the MCP handler.
+ * Order of checks on /mcp: Host and Origin, transport security, body size,
+ * key, rate limit. Only then does the request reach the MCP handler.
  */
 import { getConnInfo } from "@hono/node-server/conninfo";
-import {
-  createMcpHandler,
-  hostHeaderValidationResponse,
-  localhostAllowedHostnames,
-  localhostAllowedOrigins,
-  originValidationResponse,
-} from "@modelcontextprotocol/server";
+import { createMcpHandler } from "@modelcontextprotocol/server";
 import { type Context, Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { Reader } from "../agent/reader.ts";
@@ -46,6 +40,58 @@ export function isLocalAddress(address: string | undefined): boolean {
   return a.startsWith("fc") || a.startsWith("fd") || a.startsWith("fe80:");
 }
 
+/** Hostname part of a Host header or URL authority: "[fd00::1]:8484" -> "fd00::1". */
+export function hostnameOf(authority: string): string {
+  const a = authority.trim().toLowerCase();
+  if (a.startsWith("[")) return a.slice(1, a.indexOf("]") === -1 ? undefined : a.indexOf("]"));
+  const colons = a.split(":").length - 1;
+  return colons === 1 ? a.slice(0, a.indexOf(":")) : a; // bare IPv6 has many colons
+}
+
+const IP_LITERAL = /^(\d{1,3}\.){3}\d{1,3}$|:/;
+
+/**
+ * DNS-rebinding guard for Host and Origin. Accepted: localhost names, names
+ * listed in ALLOWED_HOSTS, and loopback or private IP literals (so
+ * http://192.168.1.20:8484/mcp works on a home network with no setup).
+ * Other names, e.g. nas.local or a public domain, must be listed in ALLOWED_HOSTS.
+ */
+export function isAllowedHostname(hostname: string, allowedHosts: string[]): boolean {
+  if (!hostname) return false;
+  if (hostname === "localhost" || allowedHosts.includes(hostname)) return true;
+  return IP_LITERAL.test(hostname) && isLocalAddress(hostname);
+}
+
+function hostOriginRejection(req: Request, allowedHosts: string[]): Response | undefined {
+  const host = req.headers.get("host");
+  if (!host || !isAllowedHostname(hostnameOf(host), allowedHosts)) {
+    return jsonError(403, "Host not allowed. Add it to ALLOWED_HOSTS.");
+  }
+  const origin = req.headers.get("origin");
+  if (origin) {
+    let originHost = "";
+    try {
+      originHost = hostnameOf(new URL(origin).host);
+    } catch {
+      originHost = "";
+    }
+    if (!isAllowedHostname(originHost, allowedHosts)) return jsonError(403, "Origin not allowed.");
+  }
+  return undefined;
+}
+
+/**
+ * Plain HTTP is fine on loopback and private networks. Anything else must
+ * come through an HTTPS proxy that runs on a local or private address and
+ * sets X-Forwarded-Proto: https. X-Forwarded-Proto from a public peer is
+ * ignored, since anyone can send that header.
+ */
+export function plainHttpRejected(peer: string | undefined, forwardedProto: string | undefined): boolean {
+  const proto = forwardedProto?.split(",")[0].trim().toLowerCase();
+  if (peer !== undefined && !isLocalAddress(peer)) return true;
+  return proto !== undefined && proto !== "https";
+}
+
 function remoteAddress(c: Context): string | undefined {
   try {
     return getConnInfo(c).remote.address;
@@ -79,8 +125,7 @@ function jsonError(status: number, message: string, headers: Record<string, stri
 export function createApp({ drive, keys, config }: AppDeps): { app: Hono; close: () => Promise<void> } {
   const app = new Hono();
   const limiter = new RateLimiter(config.rateLimitPerMinute);
-  const allowedHosts = [...localhostAllowedHostnames(), ...config.allowedHosts];
-  const allowedOrigins = [...localhostAllowedOrigins(), ...config.allowedHosts];
+  const allowedHosts = config.allowedHosts.map(hostnameOf);
 
   const handler = createMcpHandler(
     (ctx) => {
@@ -98,18 +143,14 @@ export function createApp({ drive, keys, config }: AppDeps): { app: Hono; close:
   app.get("/healthz", (c) => c.json({ ok: true, name: APP_NAME, version: APP_VERSION }));
 
   app.use("/mcp", async (c, next) => {
-    const rejected =
-      hostHeaderValidationResponse(c.req.raw, allowedHosts) ?? originValidationResponse(c.req.raw, allowedOrigins);
+    const rejected = hostOriginRejection(c.req.raw, allowedHosts);
     if (rejected) return rejected;
 
-    if (!config.allowInsecureHttp) {
-      const forwardedProto = c.req.header("x-forwarded-proto");
-      const address = remoteAddress(c);
-      const insecureProxy = forwardedProto !== undefined && forwardedProto.split(",")[0].trim() !== "https";
-      const insecureDirect = forwardedProto === undefined && address !== undefined && !isLocalAddress(address);
-      if (insecureProxy || insecureDirect) {
-        return jsonError(403, "Plain HTTP is only allowed on localhost and private networks. Put Thumbdrive behind HTTPS.");
-      }
+    if (!config.allowInsecureHttp && plainHttpRejected(remoteAddress(c), c.req.header("x-forwarded-proto"))) {
+      return jsonError(
+        403,
+        "Plain HTTP is only allowed from localhost and private networks. Put Thumbdrive behind HTTPS for anything else.",
+      );
     }
     await next();
   });

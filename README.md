@@ -28,15 +28,25 @@ npm run admin -- key create my-agent --folder /team   # prints td_... once
 npm start            # serves http://127.0.0.1:8484/mcp
 ```
 
-With Docker:
+With Docker (images for amd64 and arm64 are published to `ghcr.io/hkrlogic/thumbdrive-mcp`):
+
+```sh
+docker compose up -d     # uses docker-compose.yml
+docker exec -it thumbdrive node dist/admin.js key create my-agent --folder /
+```
+
+Or build it yourself:
 
 ```sh
 docker build -t thumbdrive-mcp .
-docker run --init -p 127.0.0.1:8484:8484 -v "$PWD/data:/data" thumbdrive-mcp
-docker run --rm -v "$PWD/data:/data" thumbdrive-mcp node --import tsx scripts/admin.ts key create my-agent --folder /
+docker run -d --init --name thumbdrive -e THUMBDRIVE_HOST=0.0.0.0 \
+  -p 127.0.0.1:8484:8484 -v thumbdrive-data:/data thumbdrive-mcp
+docker exec -it thumbdrive node dist/admin.js key create my-agent --folder /
 ```
 
-The server binds to localhost by default. To reach it from elsewhere, put HTTPS in front (Caddy or Cloudflare Tunnel); plain HTTP from public addresses is refused.
+Portainer: see [docs/portainer.md](docs/portainer.md).
+
+The server listens on localhost unless `THUMBDRIVE_HOST` is set, and that includes inside a container. The compose file sets `THUMBDRIVE_HOST=0.0.0.0` and publishes the port on `127.0.0.1` only. Change the port to `8484:8484` to reach it from your home network. Plain HTTP is accepted from localhost and private networks (10/8, 172.16/12, 192.168/16, 100.64/10 and IPv6 ULA). It is refused from public addresses, so for anything beyond the LAN put HTTPS in front (Caddy or Cloudflare Tunnel).
 
 ## Connect an agent
 
@@ -111,8 +121,9 @@ Every admin change adds a version; deletes keep history. Files you copy into `da
 | --- | --- | --- |
 | `DATA_DIR` | `./data` | Mounted data folder |
 | `PORT` | `8484` | |
-| `BIND_HOST` | `127.0.0.1` | `0.0.0.0` in the Docker image |
-| `ALLOWED_HOSTS` | | Extra host names accepted in `Host`/`Origin`, comma separated |
+| `THUMBDRIVE_HOST` | `127.0.0.1` | Address to listen on. Set `0.0.0.0` in containers (the compose file does). `BIND_HOST` also works |
+| `ALLOWED_HOSTS` | | Host names accepted in `Host`/`Origin` besides localhost and private IPs, comma separated (e.g. `nas.local`) |
+| `ALLOW_INSECURE_HTTP` | | `1` accepts plain HTTP from public addresses. Not recommended |
 | `MAX_FILE_MB` | `50` | Largest file the admin can store |
 | `READ_PAGE_BYTES` | `65536` | Bytes per read page |
 | `READ_PAGE_ROWS` | `200` | Rows per CSV page |
@@ -125,6 +136,7 @@ Every admin change adds a version; deletes keep history. Files you copy into `da
 npm run typecheck
 npm run lint
 npm test
+npm run build        # compiles to dist/, which is what the image runs
 ```
 
 ## License

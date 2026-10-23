@@ -1,5 +1,6 @@
 /**
- * Admin CLI (the web UI arrives in M3). Writes go through the same Drive code
+ * Admin CLI (the web UI arrives in M3). Run it as `npm run admin -- <command>`
+ * from a checkout, or `node dist/admin.js <command>` inside the container. Writes go through the same Drive code
  * the UI will use, so every change is versioned and checksummed.
  *
  *   npm run admin -- put <local-file> <drive-path>
@@ -16,15 +17,25 @@
  */
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
-import { KeyStore } from "../src/auth/keys.ts";
-import { loadConfig } from "../src/config.ts";
-import { Drive } from "../src/storage/drive.ts";
-import { joinDrivePath, normalizeDrivePath } from "../src/storage/paths.ts";
+import { KeyStore } from "./auth/keys.ts";
+import { loadConfig } from "./config.ts";
+import { Drive } from "./storage/drive.ts";
+import { joinDrivePath, normalizeDrivePath } from "./storage/paths.ts";
 
-const USAGE = readFileSync(new URL(import.meta.url), "utf8")
-  .split("\n")
-  .filter((line) => line.startsWith(" *   "))
-  .map((line) => line.slice(3))
+const USAGE = [
+  "put <local-file> <drive-path>",
+  "import <local-folder> <drive-folder>",
+  "mkdir <drive-path>",
+  "rm <drive-path>",
+  "ls [drive-path]",
+  "history <drive-path>",
+  "restore <drive-path> <version>",
+  "key create <name> --folder <drive-folder> [--folder ...]",
+  "key list",
+  "key revoke <name>",
+  "activity [count]",
+]
+  .map((line) => `  admin ${line}`)
   .join("\n");
 
 function usage(message?: string): never {

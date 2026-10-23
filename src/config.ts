@@ -5,7 +5,11 @@ export interface Config {
   /** Root of the mounted data folder: files/, versions/, tmp/ and thumbdrive.db live here. */
   dataDir: string;
   port: number;
-  /** Interface to bind. Localhost by default; opening up is an explicit choice. */
+  /**
+   * Interface to bind, from THUMBDRIVE_HOST (BIND_HOST also works). Localhost
+   * by default; listening on other interfaces is an explicit choice. Containers
+   * set THUMBDRIVE_HOST=0.0.0.0 so the published port can reach the server.
+   */
   bindHost: string;
   /** Largest file the admin may store, in bytes. */
   maxFileBytes: number;
@@ -35,7 +39,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   return {
     dataDir: path.resolve(env.DATA_DIR ?? "./data"),
     port: intFromEnv(env, "PORT", 8484),
-    bindHost: env.BIND_HOST ?? "127.0.0.1",
+    bindHost: env.THUMBDRIVE_HOST || env.BIND_HOST || "127.0.0.1",
     maxFileBytes: intFromEnv(env, "MAX_FILE_MB", 50) * 1024 * 1024,
     readPageBytes: intFromEnv(env, "READ_PAGE_BYTES", 64 * 1024),
     readPageRows: intFromEnv(env, "READ_PAGE_ROWS", 200),

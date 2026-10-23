@@ -20,9 +20,20 @@ function main(): void {
   const keys = new KeyStore(drive.db);
   const { app, close } = createApp({ drive, keys, config });
   const server = serve({ fetch: app.fetch, port: config.port, hostname: config.bindHost }, (info) => {
+    const inContainer = process.env.THUMBDRIVE_IN_CONTAINER === "1";
     console.log(`${APP_NAME} ${APP_VERSION} on http://${info.address}:${info.port}/mcp (data: ${config.dataDir})`);
+    if (inContainer && (config.bindHost === "127.0.0.1" || config.bindHost === "localhost" || config.bindHost === "::1")) {
+      console.log(
+        "Listening on the container's own localhost, so a published port cannot reach it. " +
+          "Set THUMBDRIVE_HOST=0.0.0.0 and publish the port (the compose file does both; it publishes on 127.0.0.1 by default).",
+      );
+    }
     if (keys.list().every((k) => k.revoked_at)) {
-      console.log("No active keys yet. Create one: npm run admin -- key create my-agent --folder /");
+      console.log(
+        inContainer
+          ? "No active keys yet. Create one: docker exec -it <container> node dist/admin.js key create my-agent --folder /"
+          : "No active keys yet. Create one: npm run admin -- key create my-agent --folder /",
+      );
     }
   });
   const shutdown = () => {
