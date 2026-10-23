@@ -20,7 +20,12 @@ Requires Node 22.13 or newer, or Docker.
 git clone https://github.com/hkrlogic/thumbdrive-mcp.git
 cd thumbdrive-mcp
 npm ci
-npm start            # listens on http://127.0.0.1:8484
+
+# put some files on the drive and make a read-only key for one folder
+npm run admin -- import ~/Documents/handbook /team
+npm run admin -- key create my-agent --folder /team   # prints td_... once
+
+npm start            # serves http://127.0.0.1:8484/mcp
 ```
 
 With Docker:
@@ -28,9 +33,91 @@ With Docker:
 ```sh
 docker build -t thumbdrive-mcp .
 docker run --init -p 127.0.0.1:8484:8484 -v "$PWD/data:/data" thumbdrive-mcp
+docker run --rm -v "$PWD/data:/data" thumbdrive-mcp node --import tsx scripts/admin.ts key create my-agent --folder /
 ```
 
-The server binds to localhost by default. To reach it from elsewhere, put HTTPS in front (Caddy or Cloudflare Tunnel).
+The server binds to localhost by default. To reach it from elsewhere, put HTTPS in front (Caddy or Cloudflare Tunnel); plain HTTP from public addresses is refused.
+
+## Connect an agent
+
+Streamable HTTP (most clients):
+
+```json
+{
+  "mcpServers": {
+    "thumbdrive": {
+      "url": "http://127.0.0.1:8484/mcp",
+      "headers": { "Authorization": "Bearer td_..." }
+    }
+  }
+}
+```
+
+stdio (the client starts the server itself):
+
+```json
+{
+  "mcpServers": {
+    "thumbdrive": {
+      "command": "npx",
+      "args": ["tsx", "/path/to/thumbdrive-mcp/src/index.ts", "--stdio"],
+      "env": { "THUMBDRIVE_KEY": "td_...", "DATA_DIR": "/path/to/thumbdrive-mcp/data" }
+    }
+  }
+}
+```
+
+Check a running server end to end: `THUMBDRIVE_KEY=td_... npm run smoke -- http://127.0.0.1:8484/mcp`.
+
+## Tools
+
+All four are annotated `readOnlyHint: true`. Anything outside the key's folders answers `Not found`, exactly like a missing file.
+
+| Tool | What it does |
+| --- | --- |
+| `list(path)` | Files and folders with size, SHA-256 and modified time |
+| `read(path, format, page, version, base64)` | Paged read. `raw` gives UTF-8 text, or base64 for binaries (or when `base64` is true). `text` gives CSV/TSV as JSON rows, and text files as text. Returns metadata JSON (sha256, version, page, pages, has_more...) then the content |
+| `search(query, path)` | Case-insensitive match on names and text content, up to 50 hits |
+| `history(path)` | Stored versions, newest first; read one with `read(path, version)` |
+
+Text views for Excel, PDF and Word files are not built yet: `format: "text"` says so, and `format: "raw"` returns them as base64.
+
+## Admin CLI
+
+```text
+npm run admin -- put <local-file> <drive-path>
+npm run admin -- import <local-folder> <drive-folder>
+npm run admin -- mkdir | rm | ls | history <drive-path>
+npm run admin -- restore <drive-path> <version>
+npm run admin -- key create <name> --folder <folder> [--folder ...]
+npm run admin -- key list | key revoke <name>
+npm run admin -- activity [count]
+```
+
+## Storage
+
+```text
+data/
+  files/        current files, as plain files
+  versions/     every stored version, named by SHA-256
+  thumbdrive.db versions, hashed keys, activity log (SQLite)
+```
+
+Every admin change adds a version; deletes keep history. Files you copy into `data/files` by hand are served too, and get their first version on the next admin change. Symlinks inside the drive are ignored.
+
+## Configuration
+
+| Variable | Default | |
+| --- | --- | --- |
+| `DATA_DIR` | `./data` | Mounted data folder |
+| `PORT` | `8484` | |
+| `BIND_HOST` | `127.0.0.1` | `0.0.0.0` in the Docker image |
+| `ALLOWED_HOSTS` | | Extra host names accepted in `Host`/`Origin`, comma separated |
+| `MAX_FILE_MB` | `50` | Largest file the admin can store |
+| `READ_PAGE_BYTES` | `65536` | Bytes per read page |
+| `READ_PAGE_ROWS` | `200` | Rows per CSV page |
+| `RATE_LIMIT_PER_MINUTE` | `120` | Requests per key per minute |
+| `THUMBDRIVE_KEY` | | Key for `--stdio` mode |
 
 ## Development
 

@@ -27,4 +27,4 @@ VOLUME ["/data"]
 EXPOSE 8484
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
   CMD ["node", "-e", "fetch('http://127.0.0.1:' + (process.env.PORT || 8484) + '/healthz').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
-CMD ["node", "--import", "tsx", "src/index.ts"]
+CMD ["node", "--disable-warning=ExperimentalWarning", "--import", "tsx", "src/index.ts"]

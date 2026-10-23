@@ -13,11 +13,13 @@
     "node": ">=22.13"
   },
   "scripts": {
-    "start": "tsx src/index.ts",
-    "dev": "tsx watch src/index.ts",
+    "start": "node --disable-warning=ExperimentalWarning --import tsx src/index.ts",
+    "dev": "node --watch --disable-warning=ExperimentalWarning --import tsx src/index.ts",
     "test": "tsx --test test/*.test.ts",
     "typecheck": "tsc --noEmit",
-    "lint": "biome lint"
+    "lint": "biome lint",
+    "admin": "node --disable-warning=ExperimentalWarning --import tsx scripts/admin.ts",
+    "smoke": "node --disable-warning=ExperimentalWarning --import tsx scripts/smoke.ts"
   },
   "dependencies": {
     "@hono/node-server": "^2.1.5",
