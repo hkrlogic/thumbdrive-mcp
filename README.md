@@ -23,9 +23,9 @@ Manage the drive from your browser. Agents never get write access; every change 
 | --- | --- |
 | ![A file's version history with Restore buttons](docs/images/file-history.png) | ![A new key with the Cursor snippet (key masked)](docs/images/keys-new-key.png) |
 
-**Try it in two minutes** with Docker or Portainer (image tag `:m3`):
+**Try it in two minutes** with Docker or Portainer (image tag `:edge`, which follows main; `:m3` also works):
 
-1. Deploy [`docker-compose.yml`](docker-compose.yml): run `docker compose up -d`, or paste it into Portainer under **Stacks → Add stack** (see [docs/portainer.md](docs/portainer.md)). It uses `ghcr.io/hkrlogic/thumbdrive-mcp:m3`.
+1. Deploy [`docker-compose.yml`](docker-compose.yml): run `docker compose up -d`, or paste it into Portainer under **Stacks → Add stack** (see [docs/portainer.md](docs/portainer.md)). It uses `ghcr.io/hkrlogic/thumbdrive-mcp:edge`.
 2. Open **http://HOST:8484/**. `HOST` is `127.0.0.1` on the Docker host, or its LAN IP if you publish `8484:8484`.
 3. Choose the admin password on the first screen. Or set `THUMBDRIVE_ADMIN_PASSWORD` in the compose file before the first start, so no one else can set it first.
 4. Drop files on **Files**, create a key on **Agent keys**, and paste the snippet into Cursor, Claude Desktop or Claude Code.

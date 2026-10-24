@@ -3,28 +3,38 @@ name: Deploy QA
 # Deploys the image the way docs/portainer.md does (the repo's
 # docker-compose.yml: 0.0.0.0 inside the container, 127.0.0.1:8484 on the
 # host, a named volume, non-root) and runs scripts/e2e.ts against it.
-#   pull_request:      builds the image from the PR head
-#   workflow_dispatch: pulls a published image (default :m3)
+#   pull_request, push to main: builds the image from source
+#   workflow_run:      after "Docker image" publishes from main, pulls that
+#                      build from GHCR (:sha-<commit>, checked to be :edge)
+#   workflow_dispatch: pulls a published image (default :edge)
 
 on:
   pull_request:
+  push:
+    branches: [main]
+  workflow_run:
+    workflows: [Docker image]
+    types: [completed]
+    branches: [main]
   workflow_dispatch:
     inputs:
       image:
         description: Published image to test
-        default: ghcr.io/hkrlogic/thumbdrive-mcp:m3
+        default: ghcr.io/hkrlogic/thumbdrive-mcp:edge
 
 permissions:
   contents: read
   packages: read
 
 concurrency:
-  group: deploy-qa-${{ github.ref }}
+  group: deploy-qa-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   deploy-qa:
     name: Compose deploy + end-to-end
+    # After a Docker image run, only test images that were actually published.
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
@@ -35,6 +45,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          # For workflow_run, test the scripts from the commit the image was built from.
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
@@ -42,16 +54,30 @@ jobs:
       - run: npm ci --ignore-scripts
 
       - name: Pull the published image
-        if: github.event_name == 'workflow_dispatch'
+        if: github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_run'
         env:
-          IMAGE: ${{ inputs.image }}
+          INPUT_IMAGE: ${{ inputs.image }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          ACTOR: ${{ github.actor }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo "$GH_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
-          docker pull "$IMAGE"
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$ACTOR" --password-stdin
+          if [ -n "$HEAD_SHA" ]; then
+            IMAGE="ghcr.io/hkrlogic/thumbdrive-mcp:sha-${HEAD_SHA:0:7}"
+            docker pull "$IMAGE"
+            docker pull ghcr.io/hkrlogic/thumbdrive-mcp:edge
+            # :edge must be this exact build (a newer main push would have moved it).
+            a=$(docker image inspect -f '{{.Id}}' "$IMAGE"); b=$(docker image inspect -f '{{.Id}}' ghcr.io/hkrlogic/thumbdrive-mcp:edge)
+            echo "sha tag $a"; echo "edge    $b"
+            [ "$a" = "$b" ] || echo "::warning::edge has moved on from ${HEAD_SHA:0:7}; testing the sha tag"
+          else
+            IMAGE="$INPUT_IMAGE"
+            docker pull "$IMAGE"
+          fi
+          docker image inspect -f '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$IMAGE"
           echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
       - name: Build the image from this commit
-        if: github.event_name != 'workflow_dispatch'
+        if: github.event_name == 'pull_request' || github.event_name == 'push'
         run: |
           docker build -t thumbdrive-mcp:qa .
           echo "IMAGE=thumbdrive-mcp:qa" >> "$GITHUB_ENV"

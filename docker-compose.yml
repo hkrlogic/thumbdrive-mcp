@@ -6,10 +6,9 @@
 
 services:
   thumbdrive:
-    # :m3 follows the m3-web-ui branch (web UI), :m1 the m1-core-drive branch.
-    # After the merge to main use :edge; after a release, a version such as
-    # :0.1 or :latest.
-    image: ghcr.io/hkrlogic/thumbdrive-mcp:m3
+    # :edge follows main (includes the web UI). :m3 (m3-web-ui branch) still
+    # works. After a release, prefer a version such as :0.1 or :latest.
+    image: ghcr.io/hkrlogic/thumbdrive-mcp:edge
     container_name: thumbdrive
     restart: unless-stopped
     init: true

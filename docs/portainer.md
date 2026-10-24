@@ -25,7 +25,7 @@ The image is `ghcr.io/hkrlogic/thumbdrive-mcp`. While the repository and package
 ```yaml
 services:
   thumbdrive:
-    image: ghcr.io/hkrlogic/thumbdrive-mcp:m3
+    image: ghcr.io/hkrlogic/thumbdrive-mcp:edge
     container_name: thumbdrive
     restart: unless-stopped
     init: true
@@ -132,7 +132,7 @@ docker exec thumbdrive node dist/admin.js put /tmp/handbook.pdf /team/handbook.p
 ## Updating and backups
 
 - **Update.** Open **Stacks → thumbdrive → Editor**, turn on **Re-pull image**, and click **Update the stack**. Your data and keys are in the volume, so they survive.
-- **Image tags.** `:m3` follows the m3-web-ui branch (with the web UI) and `:m1` the m1-core-drive branch; after the merge use `:edge` (main), and after releases use a version tag (`:0.1`) or `:latest`. Every build also gets `:sha-<commit>`.
+- **Image tags.** `:edge` follows main and is the recommended tag until the first release; after releases use a version tag (`:0.1`) or `:latest`. `:m3` and `:m1` (the milestone branches m3-web-ui and m1-core-drive, both merged into main) still work. Every build also gets `:sha-<commit>`, which pins an exact build.
 - **Back up** the `thumbdrive_thumbdrive-data` volume. It holds `files/` (the current files, as plain files), `versions/` (every stored version) and `thumbdrive.db` (version history, hashed keys and share links, the admin password hash and the activity log). Stop the stack before you copy it, or copy all three together.
 - **HTTPS.** For access from outside your home, put a proxy such as Caddy, Traefik or Cloudflare Tunnel in front, and set `THUMBDRIVE_PUBLIC_URL`. See [security.md](security.md#https).
 - **Bind mount instead of a volume.** If you mount a host folder at `/data`, it must be writable by uid 1000: `chown -R 1000:1000 /srv/thumbdrive`.
