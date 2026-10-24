@@ -1,4 +1,4 @@
-/** Small SQLite database for versions, keys and the activity log (node:sqlite). */
+/** Small SQLite database for versions, keys, share links, admin settings and the activity log (node:sqlite). */
 import { DatabaseSync } from "node:sqlite";
 
 const SCHEMA = `
@@ -36,6 +36,28 @@ CREATE TABLE IF NOT EXISTS activity (
   detail TEXT
 );
 CREATE INDEX IF NOT EXISTS activity_at ON activity (at);
+CREATE INDEX IF NOT EXISTS activity_actor ON activity (actor);
+CREATE TABLE IF NOT EXISTS settings (
+  name TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS sessions (
+  id_hash TEXT PRIMARY KEY,
+  created_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS share_links (
+  id INTEGER PRIMARY KEY,
+  folder TEXT NOT NULL,
+  label TEXT,
+  prefix TEXT NOT NULL,
+  hash TEXT NOT NULL UNIQUE,
+  created_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  revoked_at TEXT,
+  last_used_at TEXT,
+  downloads INTEGER NOT NULL DEFAULT 0
+);
 `;
 
 export function openDatabase(file: string): DatabaseSync {

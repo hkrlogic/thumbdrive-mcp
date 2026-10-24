@@ -23,6 +23,26 @@ export interface Config {
   rateLimitPerMinute: number;
   /** Allow plain HTTP from non-local addresses. Off by default; for testing only. */
   allowInsecureHttp: boolean;
+  /**
+   * Public base URL (THUMBDRIVE_PUBLIC_URL), e.g. https://drive.example.com.
+   * Used for the MCP URL, snippets and share links shown in the UI; its host
+   * is accepted like ALLOWED_HOSTS. Empty: derived from each request.
+   */
+  publicUrl: string;
+}
+
+function publicUrlFromEnv(raw: string | undefined): string {
+  if (!raw) return "";
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw new Error(`THUMBDRIVE_PUBLIC_URL must be a URL like https://drive.example.com, got "${raw}"`);
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new Error("THUMBDRIVE_PUBLIC_URL must start with http:// or https://");
+  }
+  return `${url.protocol}//${url.host}${url.pathname.replace(/\/+$/, "")}`;
 }
 
 function intFromEnv(env: NodeJS.ProcessEnv, name: string, fallback: number): number {
@@ -49,5 +69,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       .filter(Boolean),
     rateLimitPerMinute: intFromEnv(env, "RATE_LIMIT_PER_MINUTE", 120),
     allowInsecureHttp: env.ALLOW_INSECURE_HTTP === "1",
+    publicUrl: publicUrlFromEnv(env.THUMBDRIVE_PUBLIC_URL),
   };
 }
