@@ -208,6 +208,8 @@ export function registerUi(app: Hono, deps: UiDeps): void {
     // same-origin, not no-referrer: with no-referrer browsers send "Origin: null" on
     // form POSTs, which the Origin check rightly rejects.
     h.set("referrer-policy", "same-origin");
+    // Admin pages and share links are private: keep them out of search engines.
+    h.set("x-robots-tag", "noindex, nofollow");
     if (!h.has("cache-control")) h.set("cache-control", p.startsWith("/assets/") ? "public, max-age=3600" : "no-store");
   });
 

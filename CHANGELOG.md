@@ -22,6 +22,11 @@ All notable changes to this project are recorded here. Dates are in ISO format.
 - Multi-arch (amd64, arm64) image workflow publishing to `ghcr.io/hkrlogic/thumbdrive-mcp` (`:edge` from main, `:m1` from m1-core-drive, semver and `:latest` from `v*` tags, `:sha-<sha>`), with an end-to-end smoke test of the image before push.
 - `docker-compose.yml` for Portainer Stacks and `docs/portainer.md`.
 - Project scaffold: TypeScript on Node 22, Hono, official MCP TypeScript SDK, Apache 2.0 license, CI (typecheck, lint, tests).
+- Deploy QA workflow (`.github/workflows/deploy-qa.yml`): deploys the image with `docker-compose.yml` (built on pull requests, or a published tag on manual runs) and runs `scripts/e2e.ts` against it: setup, uploads, keys, MCP over HTTP, share links, restart persistence, `THUMBDRIVE_ADMIN_PASSWORD`, Host checks and the admin CLI.
+
+### Fixed
+- Files inside a deleted folder were not listed anywhere in the web UI, so they could not be restored there. They are now listed under **Deleted from this folder** on the nearest folder that still exists, with their folder path; restoring one recreates its folder.
+- Admin pages and share links now send `X-Robots-Tag: noindex, nofollow` and a robots meta tag.
 
 ### Changed
 - The Host/Origin allow-list and HTTPS rules now cover every route (the web UI as well as `/mcp`), except `/healthz`.

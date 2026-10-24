@@ -184,6 +184,7 @@ const Head: FC<{ title: string; csrf?: string }> = ({ title, csrf }) => (
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="light dark" />
     <meta name="referrer" content="same-origin" />
+    <meta name="robots" content="noindex, nofollow" />
     {csrf ? <meta name="csrf" content={csrf} /> : null}
     <title>{title} · Thumbdrive</title>
     <link rel="icon" href="/assets/icon.svg" type="image/svg+xml" />

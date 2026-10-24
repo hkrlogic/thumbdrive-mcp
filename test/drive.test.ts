@@ -111,3 +111,31 @@ test("symlinks are invisible and cannot be written through", () => {
   assert.throws(() => drive.putFile("/link.txt", text("x")), DriveError);
   assert.equal(readFileSync(path.join(outside, "secret.txt"), "utf8"), "secret");
 });
+
+test("files of a deleted folder stay listed for restore on the parent folder", () => {
+  const drive = tempDrive();
+  drive.putFile("/team/drafts/a.txt", text("a"));
+  drive.putFile("/team/drafts/deep/b.txt", text("b"));
+  drive.putFile("/team/keep/c.txt", text("c"));
+  drive.putFile("/team/top.txt", text("t"));
+  drive.deleteFile("/team/keep/c.txt");
+  drive.deleteFile("/team/top.txt");
+  drive.deleteFolder("/team/drafts");
+
+  const names = drive.listDeleted("/team").map((d) => d.name).sort();
+  // c.txt sits in a folder that still exists, so it is listed there, not here.
+  assert.deepEqual(names, ["drafts/a.txt", "drafts/deep/b.txt", "top.txt"]);
+  assert.deepEqual(drive.listDeleted("/team/keep").map((d) => d.name), ["c.txt"]);
+  assert.deepEqual(drive.listDeleted("/").map((d) => d.name).sort(), []);
+
+  // Restoring one brings its folder back, and it leaves the list.
+  const v = drive.history("/team/drafts/deep/b.txt").find((r) => r.action === "put")?.version ?? 0;
+  drive.restoreVersion("/team/drafts/deep/b.txt", v);
+  assert.equal(drive.readFile("/team/drafts/deep/b.txt").bytes.toString(), "b");
+  assert.deepEqual(drive.listDeleted("/team").map((d) => d.name).sort(), ["top.txt"]);
+  assert.deepEqual(drive.listDeleted("/team/drafts").map((d) => d.name), ["a.txt"]);
+
+  // Deleting a top-level folder lists its files on the root page.
+  drive.deleteFolder("/team");
+  assert.ok(drive.listDeleted("/").some((d) => d.name === "team/drafts/deep/b.txt"));
+});

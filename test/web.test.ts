@@ -263,6 +263,7 @@ test("pages send a strict CSP and refuse to be framed", async () => {
   assert.match(res.headers.get("content-security-policy") ?? "", /frame-ancestors 'none'/);
   // no-referrer would make browsers send "Origin: null" on form POSTs and break every form.
   assert.equal(res.headers.get("referrer-policy"), "same-origin");
+  assert.equal(res.headers.get("x-robots-tag"), "noindex, nofollow");
   assert.equal(res.headers.get("x-frame-options"), "DENY");
   assert.equal(res.headers.get("cache-control"), "no-store");
 });
@@ -332,6 +333,10 @@ test("upload, download, move, delete and restore through the UI", async () => {
   assert.equal(del.status, 303);
   assert.equal(drive.kind("/docs/nested"), null);
   assert.equal(drive.history("/docs/nested/deeper/b.txt").length, 2);
+  // ...and its files stay findable: the parent lists them for restore.
+  const afterDel = await b.page("/files?path=/docs");
+  assert.match(afterDel.html, /nested\/deeper\/b\.txt/);
+  assert.match(afterDel.html, /href="\/files\/file\?path=%2Fdocs%2Fnested%2Fdeeper%2Fb\.txt"/);
 
   // The file page and history render, escaping names.
   drive.putFile("/docs/<b>odd</b>.txt", text("x"));
@@ -528,7 +533,11 @@ test("share links: created in the UI, read-only, confined to their folder", asyn
   assert.equal(listing.status, 200);
   assert.match(listing.html, /guide\.md/);
   assert.doesNotMatch(listing.html, /secret/);
-  assert.equal(await (await anon.fetch(`/s/${token}/download?path=/guide.md`)).text(), "guide");
+  // Share links stay out of search engines.
+  assert.match(listing.html, /<meta name="robots" content="noindex, nofollow"/);
+  const guide = await anon.fetch(`/s/${token}/download?path=/guide.md`);
+  assert.equal(guide.headers.get("x-robots-tag"), "noindex, nofollow");
+  assert.equal(await guide.text(), "guide");
   assert.equal(await (await anon.fetch(`/s/${token}/download?path=/sub/deep.txt`)).text(), "deep");
   assert.equal(shares.get(record.id)?.downloads, 2);
 

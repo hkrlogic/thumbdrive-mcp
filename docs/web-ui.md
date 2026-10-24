@@ -46,7 +46,7 @@ After that, the UI shows a sign-in page. A session lasts 7 days. **Sign out** is
 - **⋯ on a row** downloads, renames or moves, opens the history of, or deletes that file or folder.
 - **Moving a folder** also moves the agent keys and share links that point into it, so they keep working.
 
-Deleted files are listed under **Deleted from this folder** at the bottom of their folder, where you can restore them.
+Deleted files are listed under **Deleted from this folder** at the bottom of their folder, where you can restore them. Files from a deleted folder are listed on the nearest folder that still exists, with their folder path (for example `drafts/notes.txt`). Restoring one brings its folder back.
 
 ## Versions and restore
 

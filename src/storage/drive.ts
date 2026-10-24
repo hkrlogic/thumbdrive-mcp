@@ -466,21 +466,40 @@ export class Drive {
     }
   }
 
-  /** Files directly inside a folder whose latest version is a delete, newest first. They can be restored. */
-  listDeleted(drivePath: string): Array<{ path: string; name: string; deleted_at: string; version: number }> {
+  /**
+   * Deleted files a folder page should offer to restore, newest first: files
+   * directly inside the folder whose latest version is a delete, plus files
+   * under a subfolder that no longer exists (a deleted or moved folder), whose
+   * `name` is then the relative path, e.g. "drafts/a.txt". Files under a
+   * subfolder that still exists are listed on that subfolder's page.
+   */
+  listDeleted(drivePath: string, limit = 200): Array<{ path: string; name: string; deleted_at: string; version: number }> {
     const dir = normalizeDrivePath(drivePath);
     const prefix = dir === "/" ? "/" : dir + "/";
     const rows = this.db
       .prepare(
         `SELECT v.path, v.version, v.created_at FROM versions v
-         WHERE v.action = 'delete' AND substr(v.path, 1, length(?)) = ? AND instr(substr(v.path, length(?) + 1), '/') = 0
+         WHERE v.action = 'delete' AND substr(v.path, 1, length(?)) = ?
            AND v.version = (SELECT MAX(version) FROM versions WHERE path = v.path)
-         ORDER BY v.created_at DESC LIMIT 200`,
+         ORDER BY v.created_at DESC, v.id DESC LIMIT 5000`,
       )
-      .all(prefix, prefix, prefix) as unknown as Array<{ path: string; version: number; created_at: string }>;
-    return rows
-      .filter((r) => this.kind(r.path) === null)
-      .map((r) => ({ path: r.path, name: r.path.slice(prefix.length), deleted_at: r.created_at, version: r.version }));
+      .all(prefix, prefix) as unknown as Array<{ path: string; version: number; created_at: string }>;
+    const goneChild = new Map<string, boolean>();
+    const out: Array<{ path: string; name: string; deleted_at: string; version: number }> = [];
+    for (const r of rows) {
+      const name = r.path.slice(prefix.length);
+      const slash = name.indexOf("/");
+      let show: boolean;
+      if (slash === -1) show = this.kind(r.path) === null;
+      else {
+        const child = prefix + name.slice(0, slash);
+        if (!goneChild.has(child)) goneChild.set(child, this.kind(child) === null);
+        show = goneChild.get(child) === true && this.kind(r.path) === null;
+      }
+      if (show) out.push({ path: r.path, name, deleted_at: r.created_at, version: r.version });
+      if (out.length >= limit) break;
+    }
+    return out;
   }
 
   /** Every folder on the drive, "/" first. Stops after `limit` folders. */
