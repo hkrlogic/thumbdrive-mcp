@@ -1,0 +1,40 @@
+# Thumbdrive MCP: paste this into Portainer (Stacks > Add stack > Web editor)
+# or run `docker compose up -d`. See docs/portainer.md.
+#
+# The image is private while the repo is private. Portainer needs a ghcr.io
+# registry entry (classic PAT with read:packages), or the package must be public.
+
+services:
+  thumbdrive:
+    # :m3 follows the m3-web-ui branch (web UI), :m1 the m1-core-drive branch.
+    # After the merge to main use :edge; after a release, a version such as
+    # :0.1 or :latest.
+    image: ghcr.io/hkrlogic/thumbdrive-mcp:m3
+    container_name: thumbdrive
+    restart: unless-stopped
+    init: true
+    environment:
+      # Listen on all interfaces inside the container so the port mapping
+      # below can reach it. Who can connect is decided by `ports`.
+      THUMBDRIVE_HOST: 0.0.0.0
+      PORT: "8484"
+      DATA_DIR: /data
+      # Hostnames clients use, besides localhost and private IPs (which always
+      # work). Comma-separated, e.g. nas.local,thumbdrive.example.com
+      ALLOWED_HOSTS: ""
+      # Optional. Without it, open http://HOST:8484/ and set the password there.
+      # THUMBDRIVE_ADMIN_PASSWORD: "change-me-to-something-long"
+      # Optional. The address people and agents use, for snippets and share links.
+      # THUMBDRIVE_PUBLIC_URL: "https://thumbdrive.example.com"
+    ports:
+      # This machine only (secure default). For other devices on your home
+      # network, change it to "8484:8484".
+      - "127.0.0.1:8484:8484"
+    volumes:
+      - thumbdrive-data:/data
+      # Optional: a host folder to import files from, read-only. Then run
+      #   node dist/admin.js import /import /team
+      # - /srv/thumbdrive-import:/import:ro
+
+volumes:
+  thumbdrive-data:
