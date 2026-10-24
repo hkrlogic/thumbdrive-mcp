@@ -13,6 +13,31 @@ Thumbdrive is a small, self-hosted [MCP](https://modelcontextprotocol.io) server
 
 > Status: early development (milestones M1 and M3).
 
+## Web UI
+
+Manage the drive from your browser. Agents never get write access; every change goes through the UI or the CLI.
+
+![Dashboard: the MCP URL, counts and the latest agent reads](docs/images/dashboard.png)
+
+| Files, versions and restore | Agent keys with ready-to-paste client configs |
+| --- | --- |
+| ![A file's version history with Restore buttons](docs/images/file-history.png) | ![A new key with the Cursor snippet (key masked)](docs/images/keys-new-key.png) |
+
+**Try it in two minutes** with Docker or Portainer (image tag `:m3`):
+
+1. Deploy [`docker-compose.yml`](docker-compose.yml): run `docker compose up -d`, or paste it into Portainer under **Stacks → Add stack** (see [docs/portainer.md](docs/portainer.md)). It uses `ghcr.io/hkrlogic/thumbdrive-mcp:m3`.
+2. Open **http://HOST:8484/**. `HOST` is `127.0.0.1` on the Docker host, or its LAN IP if you publish `8484:8484`.
+3. Choose the admin password on the first screen. Or set `THUMBDRIVE_ADMIN_PASSWORD` in the compose file before the first start, so no one else can set it first.
+4. Drop files on **Files**, create a key on **Agent keys**, and paste the snippet into Cursor, Claude Desktop or Claude Code.
+
+**Docs:**
+
+- [Web UI guide](docs/web-ui.md): every screen, with screenshots
+- [Configuration and CLI reference](docs/configuration.md): every environment variable and admin command
+- [Security](docs/security.md): sign-in, sessions, CSRF, HTTPS, read-only agents, hashed keys and links
+- [Portainer setup](docs/portainer.md)
+- [Changelog](CHANGELOG.md)
+
 ## Quick start
 
 Requires Node 22.13 or newer, or Docker.
@@ -52,9 +77,9 @@ Portainer: see [docs/portainer.md](docs/portainer.md).
 
 The server listens on localhost unless `THUMBDRIVE_HOST` is set, and that includes inside a container. The compose file sets `THUMBDRIVE_HOST=0.0.0.0` and publishes the port on `127.0.0.1` only. Change the port to `8484:8484` to reach it from your home network. Plain HTTP is accepted from localhost and private networks (10/8, 172.16/12, 192.168/16, 100.64/10 and IPv6 ULA). It is refused from public addresses, so for anything beyond the LAN put HTTPS in front (Caddy or Cloudflare Tunnel).
 
-## Web UI
+## Web UI pages
 
-The UI is served at `/` on the same port as `/mcp`.
+The UI is served at `/` on the same port as `/mcp`. See the [Web UI guide](docs/web-ui.md) for details.
 
 | Page | What you can do |
 | --- | --- |
@@ -67,9 +92,7 @@ The UI is served at `/` on the same port as `/mcp`.
 
 **Admin account.** There is one admin password. On first run the UI asks you to set it. You can instead set `THUMBDRIVE_ADMIN_PASSWORD` (applied at start; changing it signs out all sessions) or run `admin set-password`. Passwords are stored as scrypt hashes.
 
-**Security.** Sessions use an `HttpOnly`, `SameSite=Strict` cookie (also `Secure` over HTTPS) that lasts 7 days. Every form and upload is checked with a CSRF token and the browser's `Origin`/`Sec-Fetch-Site` headers. Failed logins are limited to 10 per 15 minutes per address. Pages are sent with a strict Content Security Policy and cannot be framed. Downloads are served as attachments in a sandbox. The UI is behind the same Host/Origin allow-list and HTTPS rules as `/mcp`, so a hostname such as `nas.local` must be in `ALLOWED_HOSTS` (or be `THUMBDRIVE_PUBLIC_URL`).
-
-Until a password is set, the first person to open the UI can set one. Set `THUMBDRIVE_ADMIN_PASSWORD`, or keep the port on localhost or your LAN until you have opened it once.
+**Security.** Sign-in uses a single scrypt-hashed password and a 7-day `HttpOnly`, `SameSite=Strict` session cookie. Every change is CSRF-checked, pages carry a strict CSP, and downloads are sandboxed. The UI follows the same Host/Origin allow-list and HTTPS rules as `/mcp`, so a hostname such as `nas.local` must be in `ALLOWED_HOSTS` (or be `THUMBDRIVE_PUBLIC_URL`). Until a password is set, the first person to open the UI can set one. Set `THUMBDRIVE_ADMIN_PASSWORD`, or keep the port on localhost or your LAN until you have opened it once. Details: [docs/security.md](docs/security.md).
 
 ## Connect an agent
 
@@ -117,6 +140,8 @@ Text views for Excel, PDF and Word files are not built yet: `format: "text"` say
 
 ## Admin CLI
 
+Every command is described in [docs/configuration.md](docs/configuration.md#admin-cli).
+
 ```text
 npm run admin -- put <local-file> <drive-path>
 npm run admin -- import <local-folder> <drive-folder>
@@ -142,6 +167,8 @@ data/
 Every admin change adds a version; deletes keep history. Files you copy into `data/files` by hand are served too, and get their first version on the next admin change. Symlinks inside the drive are ignored.
 
 ## Configuration
+
+The main settings are below. [docs/configuration.md](docs/configuration.md) lists every variable, with examples.
 
 | Variable | Default | |
 | --- | --- | --- |

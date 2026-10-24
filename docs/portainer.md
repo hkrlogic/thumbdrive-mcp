@@ -2,6 +2,8 @@
 
 This sets up Thumbdrive as a Portainer stack: one container, one named volume, port 8484. It takes about five minutes.
 
+After that, see the [Web UI guide](web-ui.md) for each screen, [configuration.md](configuration.md) for every setting and CLI command, and [security.md](security.md) before you open it beyond your LAN.
+
 ## 0. Let Portainer pull the image (private package only)
 
 The image is `ghcr.io/hkrlogic/thumbdrive-mcp`. While the repository and package are private, Portainer needs credentials to pull it. Pick one:
@@ -72,7 +74,9 @@ First run: open http://HOST:8484/ in a browser and set the admin password (or se
 
 Open **http://HOST:8484** in a browser. `HOST` is `127.0.0.1` on the Docker host itself, or the host's LAN IP if you published `8484:8484`. Choose an admin password of at least 8 characters. You are signed in and land on the dashboard.
 
-Until a password is set, anyone who can reach the port can set it, so do this right after deploying (or set `THUMBDRIVE_ADMIN_PASSWORD` in the stack).
+<img src="images/setup.png" alt="The first-run screen" width="340">
+
+Until a password is set, anyone who can reach the port can set it, so do this right after deploying (or set `THUMBDRIVE_ADMIN_PASSWORD` in the stack). See [the first-run caveat](security.md#first-run-caveat).
 
 Forgot it? In **Containers → thumbdrive → Console** (`/bin/sh`), run `node dist/admin.js set-password`. That also signs out every browser session.
 
@@ -83,7 +87,11 @@ Agents can only read. You add files in the web UI:
 - **Files** → drag files or whole folders onto the drop area, or use **Choose files** / **Choose a folder**. Up to `MAX_FILE_MB` (50 MB by default) per file.
 - **New folder**, and each row's **⋯** menu for download, rename or move, history and delete. Uploading a file with the same name adds a new version, and every older version can be restored from the file's page.
 
+![The Files page](images/files.png)
+
 ## 5. Create a key and connect an agent
+
+![A new key with its Cursor snippet (key masked)](images/keys-new-key.png)
 
 Go to **Agent keys**, enter a name (e.g. `laptop-cursor`), tick the folders it may read, and click **Create key**. The key (`td_...`) is shown once with a copy button, and so are ready-to-paste configs for:
 
@@ -99,7 +107,7 @@ Restart the client and ask it to "list my Thumbdrive". It should see four read-o
 
 ## Sharing a folder with a person
 
-**Share links** (or **Share** on a folder) creates a read-only link to one folder for 1 hour, 1 day (the default), 7 days or 30 days. Anyone with the link can browse and download that folder until it expires or you revoke it. The link is shown once.
+**Share links** (or **Share** on a folder) creates a read-only link to one folder for 1 hour, 1 day (the default), 7 days or 30 days. Anyone with the link can browse and download that folder until it expires or you revoke it. The link is shown once. More in the [Web UI guide](web-ui.md#share-links).
 
 ## The CLI still works
 
@@ -111,6 +119,8 @@ node dist/admin.js import /import /team                 # needs the /import moun
 node dist/admin.js set-password
 node dist/admin.js                                      # lists every command
 ```
+
+Every command is described in [configuration.md](configuration.md#admin-cli).
 
 To import a host folder, uncomment the `/import` line in the stack, set its host path, click **Update the stack**, and run the `import` command above. To copy one file from the Docker host:
 
@@ -124,4 +134,5 @@ docker exec thumbdrive node dist/admin.js put /tmp/handbook.pdf /team/handbook.p
 - **Update.** Open **Stacks → thumbdrive → Editor**, turn on **Re-pull image**, and click **Update the stack**. Your data and keys are in the volume, so they survive.
 - **Image tags.** `:m3` follows the m3-web-ui branch (with the web UI) and `:m1` the m1-core-drive branch; after the merge use `:edge` (main), and after releases use a version tag (`:0.1`) or `:latest`. Every build also gets `:sha-<commit>`.
 - **Back up** the `thumbdrive_thumbdrive-data` volume. It holds `files/` (the current files, as plain files), `versions/` (every stored version) and `thumbdrive.db` (version history, hashed keys and share links, the admin password hash and the activity log). Stop the stack before you copy it, or copy all three together.
+- **HTTPS.** For access from outside your home, put a proxy such as Caddy, Traefik or Cloudflare Tunnel in front, and set `THUMBDRIVE_PUBLIC_URL`. See [security.md](security.md#https).
 - **Bind mount instead of a volume.** If you mount a host folder at `/data`, it must be writable by uid 1000: `chown -R 1000:1000 /srv/thumbdrive`.
