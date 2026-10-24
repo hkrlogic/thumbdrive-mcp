@@ -1,0 +1,115 @@
+name: Deploy QA
+
+# Deploys the image the way docs/portainer.md does (the repo's
+# docker-compose.yml: 0.0.0.0 inside the container, 127.0.0.1:8484 on the
+# host, a named volume, non-root) and runs scripts/e2e.ts against it.
+#   pull_request:      builds the image from the PR head
+#   workflow_dispatch: pulls a published image (default :m3)
+
+on:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      image:
+        description: Published image to test
+        default: ghcr.io/hkrlogic/thumbdrive-mcp:m3
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: deploy-qa-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deploy-qa:
+    name: Compose deploy + end-to-end
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      TD_ADMIN_PASSWORD: qa-admin-pass-${{ github.run_id }}
+      TD_EXEC: docker exec -i thumbdrive
+      TD_STATE: ${{ runner.temp }}/e2e-state.json
+      BASE: http://127.0.0.1:8484
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --ignore-scripts
+
+      - name: Pull the published image
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          IMAGE: ${{ inputs.image }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "$GH_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          docker pull "$IMAGE"
+          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+      - name: Build the image from this commit
+        if: github.event_name != 'workflow_dispatch'
+        run: |
+          docker build -t thumbdrive-mcp:qa .
+          echo "IMAGE=thumbdrive-mcp:qa" >> "$GITHUB_ENV"
+      - name: Point the compose file at the image under test
+        run: |
+          docker image inspect "$IMAGE" --format 'image {{.Id}} created {{.Created}} user={{.Config.User}}'
+          printf 'services:\n  thumbdrive:\n    image: %s\n    pull_policy: never\n' "$IMAGE" > "$RUNNER_TEMP/image.yml"
+          printf 'services:\n  thumbdrive:\n    environment:\n      THUMBDRIVE_ADMIN_PASSWORD: "%s"\n' "$TD_ADMIN_PASSWORD" > "$RUNNER_TEMP/envpass.yml"
+          echo "COMPOSE=docker compose -p tdqa -f docker-compose.yml -f $RUNNER_TEMP/image.yml" >> "$GITHUB_ENV"
+
+      - name: Deploy (docker compose up)
+        run: |
+          $COMPOSE up -d
+          for i in $(seq 1 30); do
+            [ "$(docker inspect -f '{{.State.Health.Status}}' thumbdrive)" = healthy ] && break; sleep 2
+          done
+          docker ps --filter name=thumbdrive
+          test "$(docker inspect -f '{{.State.Health.Status}}' thumbdrive)" = healthy
+          test "$(docker exec thumbdrive id -u)" != 0
+          docker exec thumbdrive id
+          test "$(docker exec thumbdrive stat -c %U /data)" = node
+          docker inspect -f '{{range .Mounts}}{{.Type}} {{.Name}} -> {{.Destination}}{{end}}' thumbdrive | grep -q 'volume tdqa_thumbdrive-data -> /data'
+          docker port thumbdrive | tee /dev/stderr | grep -q '127.0.0.1:8484'
+
+      - name: End-to-end, first run (setup in the UI)
+        run: npx tsx scripts/e2e.ts "$BASE" first-run
+
+      - name: Restart the container
+        run: |
+          docker restart thumbdrive
+          for i in $(seq 1 30); do curl -fsS "$BASE/healthz" && break; sleep 1; done
+      - name: Recreate the container on the same volume
+        run: |
+          $COMPOSE down
+          $COMPOSE up -d
+          for i in $(seq 1 30); do curl -fsS "$BASE/healthz" && break; sleep 1; done
+      - name: End-to-end, after restart (data, keys, links persist)
+        run: npx tsx scripts/e2e.ts "$BASE" after-restart
+
+      - name: Admin CLI in the container
+        run: |
+          printf 'hello from the cli\n' | docker exec -i thumbdrive node dist/admin.js put /dev/stdin /cli/hello.txt
+          docker exec thumbdrive node dist/admin.js ls /cli | grep -q hello.txt
+          docker exec thumbdrive node dist/admin.js activity | head -5
+
+      - name: Fresh deploy with THUMBDRIVE_ADMIN_PASSWORD
+        run: |
+          $COMPOSE down
+          docker compose -p tdqa-env -f docker-compose.yml -f "$RUNNER_TEMP/image.yml" -f "$RUNNER_TEMP/envpass.yml" up -d
+          for i in $(seq 1 30); do curl -fsS "$BASE/healthz" && break; sleep 1; done
+          npx tsx scripts/e2e.ts "$BASE" env-password
+
+      - name: Container logs
+        if: always()
+        run: docker logs thumbdrive 2>&1 | tail -100 || true
+      - name: Tear down
+        if: always()
+        run: |
+          docker compose -p tdqa-env -f docker-compose.yml down -v || true
+          $COMPOSE down -v || true
