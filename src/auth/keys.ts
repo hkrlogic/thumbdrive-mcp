@@ -83,6 +83,49 @@ export class KeyStore {
     return this.get(row.id);
   }
 
+  /** Replace a key's folders. Takes effect on the agent's next request. */
+  setFolders(id: number, folders: string[]): KeyRecord {
+    if (folders.length === 0) throw new Error("A key needs at least one folder (use / for the whole drive)");
+    const normalized = [...new Set(folders.map(normalizeDrivePath))];
+    const record = this.get(id);
+    if (!record) throw new Error("No such key");
+    transaction(this.db, () => {
+      this.db.prepare("DELETE FROM key_folders WHERE key_id = ?").run(id);
+      const insert = this.db.prepare("INSERT INTO key_folders (key_id, folder) VALUES (?, ?)");
+      for (const folder of normalized) insert.run(id, folder);
+    });
+    return this.get(id) as KeyRecord;
+  }
+
+  /**
+   * A folder was renamed: point every key folder at or under `from` to the
+   * same place under `to`, so agents keep their access.
+   */
+  retargetFolder(from: string, to: string): void {
+    const src = normalizeDrivePath(from);
+    const dest = normalizeDrivePath(to);
+    const rows = this.db.prepare("SELECT key_id, folder FROM key_folders").all() as unknown as Array<{
+      key_id: number;
+      folder: string;
+    }>;
+    transaction(this.db, () => {
+      for (const row of rows) {
+        if (row.folder !== src && !row.folder.startsWith(src + "/")) continue;
+        const next = dest + row.folder.slice(src.length);
+        this.db.prepare("DELETE FROM key_folders WHERE key_id = ? AND folder = ?").run(row.key_id, row.folder);
+        this.db.prepare("INSERT OR IGNORE INTO key_folders (key_id, folder) VALUES (?, ?)").run(row.key_id, next);
+      }
+    });
+  }
+
+  /** Revoke by id. Returns false if the key does not exist or is already revoked. */
+  revokeById(id: number): boolean {
+    const result = this.db
+      .prepare("UPDATE keys SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL")
+      .run(nowIso(), id);
+    return Number(result.changes) > 0;
+  }
+
   /** Revoke by name. Returns false if no active key has that name. */
   revoke(name: string): boolean {
     const result = this.db

@@ -3,13 +3,14 @@ name: Docker image
 # Builds ghcr.io/hkrlogic/thumbdrive-mcp for linux/amd64 and linux/arm64.
 #   main            -> :edge
 #   m1-core-drive   -> :m1
+#   m3-web-ui       -> :m3
 #   tag v1.2.3      -> :1.2.3, :1.2, :latest
 #   every build     -> :sha-<short sha>
 # Before pushing, the amd64 image is started and checked end to end.
 
 on:
   push:
-    branches: [main, m1-core-drive]
+    branches: [main, m1-core-drive, m3-web-ui]
     tags: ["v*"]
   workflow_dispatch:
 
@@ -46,6 +47,7 @@ jobs:
           tags: |
             type=raw,value=edge,enable=${{ github.ref == 'refs/heads/main' }}
             type=raw,value=m1,enable=${{ github.ref == 'refs/heads/m1-core-drive' }}
+            type=raw,value=m3,enable=${{ github.ref == 'refs/heads/m3-web-ui' }}
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
@@ -89,6 +91,11 @@ jobs:
             sleep 2
           done
           docker inspect -f '{{.State.Health.Status}}' td | grep -qx healthy
+          # Web UI: first run sends the browser to /setup; the CLI can set the password too.
+          test "$(curl -s -o /dev/null -w '%{http_code} %{redirect_url}' http://127.0.0.1:8484/)" = "303 http://127.0.0.1:8484/setup"
+          curl -fsS -o /tmp/setup.html http://127.0.0.1:8484/setup && grep -q 'action="/setup"' /tmp/setup.html
+          echo 'ci-admin-password' | docker exec -i td node dist/admin.js set-password
+          test "$(curl -s -o /dev/null -w '%{http_code} %{redirect_url}' http://127.0.0.1:8484/)" = "303 http://127.0.0.1:8484/login"
           test "$(docker exec td id -u)" != 0
           docker exec td sh -c 'echo "hello from ci" > /tmp/hello.txt && node dist/admin.js put /tmp/hello.txt /notes/hello.txt'
           OUT=$(docker exec td node dist/admin.js key create ci --folder /)

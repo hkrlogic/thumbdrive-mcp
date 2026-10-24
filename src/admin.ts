@@ -1,12 +1,13 @@
 /**
- * Admin CLI (the web UI arrives in M3). Run it as `npm run admin -- <command>`
- * from a checkout, or `node dist/admin.js <command>` inside the container. Writes go through the same Drive code
- * the UI will use, so every change is versioned and checksummed.
+ * Admin CLI, next to the web UI. Run it as `npm run admin -- <command>` from a
+ * checkout, or `node dist/admin.js <command>` inside the container. Writes go
+ * through the same Drive code as the UI, so every change is versioned and checksummed.
  *
  *   npm run admin -- put <local-file> <drive-path>
  *   npm run admin -- import <local-folder> <drive-folder>
  *   npm run admin -- mkdir <drive-path>
  *   npm run admin -- rm <drive-path>
+ *   npm run admin -- mv <drive-path> <new-drive-path>
  *   npm run admin -- ls [drive-path]
  *   npm run admin -- history <drive-path>
  *   npm run admin -- restore <drive-path> <version>
@@ -14,19 +15,24 @@
  *   npm run admin -- key list
  *   npm run admin -- key revoke <name>
  *   npm run admin -- activity [count]
+ *   npm run admin -- set-password          (prompts; or pipe the password on stdin)
  */
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 import { KeyStore } from "./auth/keys.ts";
+import { createInterface } from "node:readline";
 import { loadConfig } from "./config.ts";
+import { moveEntry } from "./ops.ts";
 import { Drive } from "./storage/drive.ts";
 import { joinDrivePath, normalizeDrivePath } from "./storage/paths.ts";
+import { AdminAuth } from "./web/auth.ts";
 
 const USAGE = [
   "put <local-file> <drive-path>",
   "import <local-folder> <drive-folder>",
   "mkdir <drive-path>",
   "rm <drive-path>",
+  "mv <drive-path> <new-drive-path>",
   "ls [drive-path]",
   "history <drive-path>",
   "restore <drive-path> <version>",
@@ -34,6 +40,7 @@ const USAGE = [
   "key list",
   "key revoke <name>",
   "activity [count]",
+  "set-password",
 ]
   .map((line) => `  admin ${line}`)
   .join("\n");
@@ -60,7 +67,29 @@ function importFolder(drive: Drive, localDir: string, driveDir: string): number 
   return count;
 }
 
-function main(argv: string[]): void {
+/** Read one line: hidden when typed at a terminal, otherwise the first line of stdin. */
+async function readSecret(prompt: string): Promise<string> {
+  if (!process.stdin.isTTY) {
+    const chunks: Buffer[] = [];
+    for await (const chunk of process.stdin) chunks.push(chunk as Buffer);
+    return Buffer.concat(chunks).toString("utf8").split(/\r?\n/)[0] ?? "";
+  }
+  const rl = createInterface({ input: process.stdin, output: process.stdout, terminal: true });
+  const muted = rl as unknown as { _writeToOutput: (s: string) => void };
+  let prompted = false;
+  muted._writeToOutput = (s: string) => {
+    if (!prompted) {
+      process.stdout.write(s);
+      prompted = true;
+    }
+  };
+  const answer = await new Promise<string>((resolve) => rl.question(prompt, resolve));
+  rl.close();
+  process.stdout.write("\n");
+  return answer;
+}
+
+async function main(argv: string[]): Promise<void> {
   const [command, ...rest] = argv;
   if (!command || command === "help" || command === "--help") usage();
   const config = loadConfig();
@@ -90,6 +119,24 @@ function main(argv: string[]): void {
         if (!rest[0]) usage("rm needs <drive-path>");
         const row = drive.deleteFile(rest[0]);
         console.log(`Deleted ${normalizeDrivePath(rest[0])} (recorded as v${row.version}; earlier versions kept)`);
+        break;
+      }
+      case "mv": {
+        const [from, to] = rest;
+        if (!from || !to) usage("mv needs <drive-path> <new-drive-path>");
+        const target = moveEntry(drive, keys, normalizeDrivePath(from), normalizeDrivePath(to));
+        console.log(`Moved ${normalizeDrivePath(from)} to ${target}`);
+        break;
+      }
+      case "set-password": {
+        const auth = new AdminAuth(drive.db);
+        const password = await readSecret("New admin password: ");
+        if (process.stdin.isTTY && (await readSecret("Repeat it: ")) !== password) {
+          throw new Error("The passwords do not match");
+        }
+        await auth.setPassword(password);
+        drive.logActivity("admin", "password", null, "set with the CLI");
+        console.log("Admin password saved. All web sessions were signed out.");
         break;
       }
       case "ls": {
@@ -153,4 +200,4 @@ function main(argv: string[]): void {
   }
 }
 
-main(process.argv.slice(2));
+void main(process.argv.slice(2));

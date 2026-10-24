@@ -1,7 +1,9 @@
 /**
- * HTTP surface: /healthz and the Streamable HTTP MCP endpoint at /mcp.
- * Order of checks on /mcp: Host and Origin, transport security, body size,
- * key, rate limit. Only then does the request reach the MCP handler.
+ * HTTP surface: /healthz, the Streamable HTTP MCP endpoint at /mcp, and the
+ * admin web UI (src/web/ui.tsx) on everything else.
+ * Every route but /healthz first passes the Host/Origin and transport checks.
+ * Then /mcp checks body size, key and rate limit; the UI checks CSRF and the
+ * admin session.
  */
 import { getConnInfo } from "@hono/node-server/conninfo";
 import { createMcpHandler } from "@modelcontextprotocol/server";
@@ -13,6 +15,9 @@ import type { Config } from "../config.ts";
 import { createMcpServer } from "../mcp/server.ts";
 import type { Drive } from "../storage/drive.ts";
 import { APP_NAME, APP_VERSION } from "../version.ts";
+import { AdminAuth, LoginLimiter } from "../web/auth.ts";
+import { ShareStore } from "../web/shares.ts";
+import { registerUi } from "../web/ui.tsx";
 
 export interface AppDeps {
   drive: Drive;
@@ -122,10 +127,26 @@ function jsonError(status: number, message: string, headers: Record<string, stri
   });
 }
 
-export function createApp({ drive, keys, config }: AppDeps): { app: Hono; close: () => Promise<void> } {
+/** Whether the request reached us over HTTPS: only a local or private proxy is trusted to say so. */
+function viaHttps(c: Context): boolean {
+  if (new URL(c.req.url).protocol === "https:") return true;
+  const peer = remoteAddress(c);
+  if (peer !== undefined && !isLocalAddress(peer)) return false;
+  return c.req.header("x-forwarded-proto")?.split(",")[0].trim().toLowerCase() === "https";
+}
+
+export interface App {
+  app: Hono;
+  auth: AdminAuth;
+  close: () => Promise<void>;
+}
+
+export function createApp({ drive, keys, config }: AppDeps): App {
   const app = new Hono();
   const limiter = new RateLimiter(config.rateLimitPerMinute);
   const allowedHosts = config.allowedHosts.map(hostnameOf);
+  if (config.publicUrl) allowedHosts.push(hostnameOf(new URL(config.publicUrl).host));
+  const auth = new AdminAuth(drive.db);
 
   const handler = createMcpHandler(
     (ctx) => {
@@ -142,7 +163,8 @@ export function createApp({ drive, keys, config }: AppDeps): { app: Hono; close:
 
   app.get("/healthz", (c) => c.json({ ok: true, name: APP_NAME, version: APP_VERSION }));
 
-  app.use("/mcp", async (c, next) => {
+  app.use("*", async (c, next) => {
+    if (c.req.path === "/healthz") return next();
     const rejected = hostOriginRejection(c.req.raw, allowedHosts);
     if (rejected) return rejected;
 
@@ -179,5 +201,16 @@ export function createApp({ drive, keys, config }: AppDeps): { app: Hono; close:
     });
   });
 
-  return { app, close: () => handler.close() };
+  registerUi(app, {
+    drive,
+    keys,
+    config,
+    auth,
+    shares: new ShareStore(drive.db),
+    loginLimiter: new LoginLimiter(),
+    isHttps: viaHttps,
+    clientAddress: (c) => remoteAddress(c) ?? "local",
+  });
+
+  return { app, auth, close: () => handler.close() };
 }
