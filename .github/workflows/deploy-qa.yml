@@ -30,7 +30,6 @@ jobs:
     env:
       TD_ADMIN_PASSWORD: qa-admin-pass-${{ github.run_id }}
       TD_EXEC: docker exec -i thumbdrive
-      TD_STATE: ${{ runner.temp }}/e2e-state.json
       BASE: http://127.0.0.1:8484
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
