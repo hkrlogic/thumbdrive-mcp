@@ -36,6 +36,7 @@ const PREFIX_NIBBLES = [9, 7, 6] as const;
 export const ouiDataset: DatasetKind = {
   name: "oui",
   title: "OUI database",
+  unit: "rows",
   defaultUrl: OUI_SOURCE_URL,
   fileHint: "master_oui.db (SQLite with table oui_registry) from Ringmast4r/OUI-Master-Database",
   parse(file, bytes): ParsedDataset {

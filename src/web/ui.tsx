@@ -560,8 +560,8 @@ export function registerUi(app: Hono, deps: UiDeps): void {
     try {
       const [file] = files(await form(c), "file");
       if (!file) throw new DatasetError(`Choose a file: ${datasets.kind(name).fileHint}`);
-      const row = datasets.importBytes(name, new Uint8Array(await file.arrayBuffer()), `upload:${file.name}`, "admin");
-      return done(c, `/datasets/${name}`, "ok", `Imported version ${row.version}: ${row.rows.toLocaleString("en-US")} rows`);
+      const row = await datasets.importBytes(name, new Uint8Array(await file.arrayBuffer()), `upload:${file.name}`, "admin");
+      return done(c, `/datasets/${name}`, "ok", `Imported version ${row.version}: ${row.rows.toLocaleString("en-US")} ${datasets.kind(name).unit}`);
     } catch (error) {
       return done(c, `/datasets/${name}`, "error", userMessage(error));
     }
@@ -572,7 +572,7 @@ export function registerUi(app: Hono, deps: UiDeps): void {
     if (!isDatasetName(name)) return c.notFound();
     try {
       const row = await datasets.importFrom(name, undefined, "admin");
-      return done(c, `/datasets/${name}`, "ok", `Downloaded version ${row.version}: ${row.rows.toLocaleString("en-US")} rows`);
+      return done(c, `/datasets/${name}`, "ok", `Downloaded version ${row.version}: ${row.rows.toLocaleString("en-US")} ${datasets.kind(name).unit}`);
     } catch (error) {
       return done(c, `/datasets/${name}`, "error", userMessage(error));
     }

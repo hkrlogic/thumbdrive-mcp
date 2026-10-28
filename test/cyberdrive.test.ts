@@ -50,9 +50,9 @@ function store() {
   return { drive, datasets: new DatasetStore(drive, [ouiDataset]) };
 }
 
-function imported() {
+async function imported() {
   const s = store();
-  s.datasets.importBytes("oui", fixtureDb(ROWS), "test", "admin");
+  await s.datasets.importBytes("oui", fixtureDb(ROWS), "test", "admin");
   return { ...s, oui: new OuiLookup(s.datasets) };
 }
 
@@ -98,8 +98,8 @@ test("normalizeMac rejects invalid input", () => {
 
 // ---------- lookups ----------
 
-test("lookup uses the longest prefix: 9, then 7, then 6 nibbles", () => {
-  const { oui } = imported();
+test("lookup uses the longest prefix: 9, then 7, then 6 nibbles", async () => {
+  const { oui } = await imported();
   const [masS, masM, maL, cisco] = oui.lookup(["8C:1F:64:AF:A0:00", "8C:1F:64:A1:00:00", "8C:1F:64:00:00:00", "00:00:0C:12:34:56"])
     .results;
   assert.equal(masS.match?.manufacturer, "DATA ELECTRONIC DEVICES, INC");
@@ -117,8 +117,8 @@ test("lookup uses the longest prefix: 9, then 7, then 6 nibbles", () => {
   }
 });
 
-test("lookup says No match explicitly and flags invalid input", () => {
-  const { oui } = imported();
+test("lookup says No match explicitly and flags invalid input", async () => {
+  const { oui } = await imported();
   const [none, bad] = oui.lookup(["AC:DE:48:00:11:22", "zz"]).results;
   assert.equal(none.result, "No match");
   assert.equal(none.match, null);
@@ -126,8 +126,8 @@ test("lookup says No match explicitly and flags invalid input", () => {
   assert.equal(bad.result, "invalid");
 });
 
-test("locally administered addresses get a note, not a vendor", () => {
-  const { oui } = imported();
+test("locally administered addresses get a note, not a vendor", async () => {
+  const { oui } = await imported();
   const [local, qemu] = oui.lookup(["02:00:00:00:00:01", "52:54:00:12:34:56"]).results;
   assert.equal(local.locally_administered, true);
   assert.equal(local.result, "locally administered");
@@ -138,8 +138,8 @@ test("locally administered addresses get a note, not a vendor", () => {
   assert.equal(qemu.registered_block?.manufacturer, "QEMU virtual NIC");
 });
 
-test("multicast and broadcast are flagged", () => {
-  const { oui } = imported();
+test("multicast and broadcast are flagged", async () => {
+  const { oui } = await imported();
   const [mcast, bcast, ipv6] = oui.lookup(["01:00:5E:00:00:FB", "FF:FF:FF:FF:FF:FF", "33:33:00:00:00:01"]).results;
   assert.equal(mcast.multicast, true);
   assert.equal(mcast.locally_administered, false);
@@ -149,15 +149,15 @@ test("multicast and broadcast are flagged", () => {
   assert.match(ipv6.note ?? "", /IPv6/);
 });
 
-test("non-current registry status is called out", () => {
-  const { oui } = imported();
+test("non-current registry status is called out", async () => {
+  const { oui } = await imported();
   const [gone] = oui.lookup(["00:11:22:33:44:55"]).results;
   assert.equal(gone.match?.status, "deregistered");
   assert.match(gone.note ?? "", /deregistered/);
 });
 
-test("batches are capped at 50 and vendor search works", () => {
-  const { oui } = imported();
+test("batches are capped at 50 and vendor search works", async () => {
+  const { oui } = await imported();
   assert.throws(() => oui.lookup(Array(51).fill("00:00:0C:00:00:00")), DatasetError);
   assert.equal(oui.lookup(Array(50).fill("00:00:0C:00:00:00")).results.length, 50);
   const found = oui.searchVendor("cisco");
@@ -173,25 +173,25 @@ test("lookups before any import fail clearly", () => {
 
 // ---------- import ----------
 
-test("import validates the file", () => {
+test("import validates the file", async () => {
   const { datasets } = store();
-  assert.throws(() => datasets.importBytes("oui", new TextEncoder().encode("hello, not sqlite".repeat(10)), "t"), /Not a SQLite/);
-  assert.throws(() => datasets.importBytes("oui", new Uint8Array(), "t"), /empty/);
-  assert.throws(() => datasets.importBytes("oui", fixtureDb([], { table: "other", columns: COLUMNS }), "t"), /no table "oui_registry"/);
-  assert.throws(
+  await assert.rejects(() => datasets.importBytes("oui", new TextEncoder().encode("hello, not sqlite".repeat(10)), "t"), /Not a SQLite/);
+  await assert.rejects(() => datasets.importBytes("oui", new Uint8Array(), "t"), /empty/);
+  await assert.rejects(() => datasets.importBytes("oui", fixtureDb([], { table: "other", columns: COLUMNS }), "t"), /no table "oui_registry"/);
+  await assert.rejects(
     () => datasets.importBytes("oui", fixtureDb([], { columns: "oui, manufacturer" }), "t"),
     /missing column\(s\): registry/,
   );
-  assert.throws(() => datasets.importBytes("oui", fixtureDb([["nope", "X", "MA-L"]]), "t"), /No usable rows/);
-  assert.throws(() => datasets.importBytes("nope", fixtureDb(ROWS), "t"), /Unknown dataset/);
+  await assert.rejects(() => datasets.importBytes("oui", fixtureDb([["nope", "X", "MA-L"]]), "t"), /No usable rows/);
+  await assert.rejects(() => datasets.importBytes("nope", fixtureDb(ROWS), "t"), /Unknown dataset/);
   const small = new DatasetStore(tempDrive(), [ouiDataset], 1000);
-  assert.throws(() => small.importBytes("oui", fixtureDb(ROWS), "t"), /DATASET_MAX_MB/);
+  await assert.rejects(() => small.importBytes("oui", fixtureDb(ROWS), "t"), /DATASET_MAX_MB/);
   assert.equal(datasets.current("oui"), undefined, "failed imports leave nothing behind");
 });
 
 test("re-import replaces the data, bumps the version and keeps history", async () => {
   const { drive, datasets } = store();
-  const v1 = datasets.importBytes("oui", fixtureDb(ROWS), "first", "admin");
+  const v1 = await datasets.importBytes("oui", fixtureDb(ROWS), "first", "admin");
   assert.equal(v1.version, 1);
   assert.equal(v1.rows, 7);
   assert.equal(v1.skipped, 1);
@@ -211,7 +211,7 @@ test("re-import replaces the data, bumps the version and keeps history", async (
   assert.equal(cisco.result, "No match", "old rows are gone");
   assert.equal(only.match?.citation, "cyberdrive:oui@v2#00:AB:CD");
   // A bad file does not touch the current version.
-  assert.throws(() => datasets.importBytes("oui", new Uint8Array(200), "bad"));
+  await assert.rejects(() => datasets.importBytes("oui", new Uint8Array(200), "bad"));
   assert.equal(datasets.current("oui")?.version, 2);
   assert.equal(oui.lookup(["00:AB:CD:00:00:01"]).results[0].result, "match");
   assert.ok(drive.recentActivity(10).some((a) => a.action === "dataset.import" && /oui v2/.test(a.detail ?? "")));
@@ -235,8 +235,8 @@ test("keys get datasets only when granted; whole-drive keys do not", () => {
   assert.throws(() => keys.setFolders(cyber.id, [], []), /at least one folder/);
 });
 
-test("DatasetReader hides ungranted datasets and logs every lookup", () => {
-  const { drive, datasets } = imported();
+test("DatasetReader hides ungranted datasets and logs every lookup", async () => {
+  const { drive, datasets } = await imported();
   const denied = new DatasetReader(datasets, [], "key:root");
   assert.equal(denied.has("oui"), false);
   assert.throws(() => denied.lookupMac(["00:00:0C:00:00:00"]), /Not found/i);
@@ -258,7 +258,7 @@ test("MCP: lookup_mac is listed only for keys granted oui", async () => {
   const config = testConfig(drive);
   const { app, datasets, close } = createApp({ drive, keys, config });
   after(() => close());
-  datasets.importBytes("oui", fixtureDb(ROWS), "test");
+  await datasets.importBytes("oui", fixtureDb(ROWS), "test");
   const plain = keys.create("plain", ["/"]).key;
   const cyber = keys.create("cyber", [], ["oui"]).key;
   const { serve } = await import("@hono/node-server");

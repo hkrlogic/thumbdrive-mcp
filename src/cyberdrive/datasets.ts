@@ -17,7 +17,7 @@ import { nowIso, transaction } from "../storage/db.ts";
 import type { Drive } from "../storage/drive.ts";
 
 /** Every dataset a key can be granted. */
-export const DATASET_NAMES = ["oui"] as const;
+export const DATASET_NAMES = ["oui", "winevent"] as const;
 export type DatasetName = (typeof DATASET_NAMES)[number];
 
 export function isDatasetName(name: string): name is DatasetName {
@@ -43,12 +43,14 @@ export interface ParsedDataset {
 export interface DatasetKind {
   name: DatasetName;
   title: string;
+  /** What `rows` counts, for messages ("rows", "events"). */
+  unit: string;
   /** Where "Refresh from source" downloads from. */
   defaultUrl: string;
   /** What the admin uploads, for the UI and errors. */
   fileHint: string;
   /** Validate and parse a source file saved at `file` (bytes are the same content). Throws DatasetError. */
-  parse: (file: string, bytes: Uint8Array) => ParsedDataset;
+  parse: (file: string, bytes: Uint8Array) => ParsedDataset | Promise<ParsedDataset>;
 }
 
 export interface DatasetImport {
@@ -125,7 +127,7 @@ export class DatasetStore {
   }
 
   /** Validate and import `bytes` as the next version of `name`. The old data stays until the new data commits. */
-  importBytes(name: string, bytes: Uint8Array, source: string, actor = "admin"): DatasetImport {
+  async importBytes(name: string, bytes: Uint8Array, source: string, actor = "admin"): Promise<DatasetImport> {
     const kind = this.kind(name);
     if (bytes.length === 0) throw new DatasetError("The file is empty");
     if (bytes.length > this.maxBytes) throw new DatasetError(`The file is larger than the ${this.maxBytes}-byte limit (DATASET_MAX_MB)`);
@@ -134,7 +136,7 @@ export class DatasetStore {
     writeFileSync(tmp, bytes);
     let parsed: ParsedDataset;
     try {
-      parsed = kind.parse(tmp, bytes);
+      parsed = await kind.parse(tmp, bytes);
     } finally {
       rmSync(tmp, { force: true });
     }

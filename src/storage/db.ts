@@ -90,6 +90,22 @@ CREATE TABLE IF NOT EXISTS oui_entries (
   status TEXT,
   deregistered_date TEXT
 );
+CREATE TABLE IF NOT EXISTS winevent_events (
+  event_id INTEGER NOT NULL,
+  category TEXT NOT NULL,
+  subcategory TEXT NOT NULL,
+  summary TEXT NOT NULL,
+  min_os TEXT,
+  position INTEGER NOT NULL,
+  PRIMARY KEY (event_id, category, subcategory)
+);
+CREATE TABLE IF NOT EXISTS winevent_messages (
+  event_id INTEGER NOT NULL,
+  version INTEGER NOT NULL,
+  message TEXT NOT NULL,
+  min_os TEXT,
+  PRIMARY KEY (event_id, version)
+);
 `;
 
 export function openDatabase(file: string): DatabaseSync {
