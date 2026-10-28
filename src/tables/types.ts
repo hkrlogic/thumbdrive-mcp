@@ -269,8 +269,8 @@ export function checkValue(column: Pick<Column, "type" | "options">, raw: unknow
     }
     case "mac": {
       const m = normalizeMac(text);
-      if (!m || m.hex.length !== 12) return bad("not a MAC address (12 hex digits, e.g. 00:1A:2B:3C:4D:5E)");
-      return ok(m.display);
+      if (m?.hex.length === 12) return ok(m.display);
+      return bad("not a MAC address (12 hex digits, e.g. 00:1A:2B:3C:4D:5E)");
     }
     case "cve": {
       const m = CVE.exec(text.replace(/\s+/g, ""));
