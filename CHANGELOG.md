@@ -5,6 +5,14 @@ All notable changes to this project are recorded here. Dates are in ISO format.
 ## Unreleased
 
 ### Added
+- CyberDrive tables ([docs/tables.md](docs/tables.md)): typed, user-edited tables stored in SQLite at a folder path, so keys and share links that cover the folder cover the table (dataset grants only add OUI vendor and NIST control titles to lookups). Column types are text, long text, number, date, checkbox, single select, URL and email, plus hostname, IP address, CIDR, MAC, CVE ID and control ID, all validated and normalized. Row IDs are never reused, and each row has a history.
+- Draft and publish: edits go to a draft; **Review and publish** shows added, changed and removed rows, column changes, and the problems that block publishing (any invalid cell, or duplicate or empty keys). Publishing with a note creates a numbered version. **Versions** lists them, and **Roll back** republishes an old version as a new one.
+- Grid UI built on Tabulator 6.7.1 (MIT, vendored under `src/web/static/vendor/tabulator`, pinned and hashed in [docs/third-party-licenses.md](docs/third-party-licenses.md), served same-origin under the existing strict CSP). It covers keyboard navigation and editing, add and delete rows, paste from Excel or the clipboard (header detection, key-aware updates), sort and filter, red invalid cells with reasons, column add, rename, reorder, retype and delete with a key column choice, CSV export with a formula-injection guard, light and dark themes, and mobile layout.
+- CSV and XLSX import (via `read-excel-file`) into a new or existing table: preview, suggested column types, key column, column mapping, a report of invalid rows; the import lands in the draft.
+- Templates **Server inventory** and **IP plan / VLANs**, defined in `src/tables/templates.ts`.
+- MCP tools `list_tables`, `describe_table`, `lookup_row` (type-aware matching, longest-prefix CIDR match for IPs, explicit `No match`, citations like `cyberdrive:/inventory/servers@v3#r12`) and `query_table` (a fixed operator list, parameterized, paged). Read-only, published versions only, every call logged.
+- Share links show the folder's published tables (read-only, CSV download).
+- `scripts/e2e.ts` covers creating a table from a template, editing, publish, `lookup_row` and `query_table`, rollback, an XLSX import and persistence after restart.
 - CyberDrive, read-only security reference datasets for agents ([docs/cyberdrive.md](docs/cyberdrive.md)). First dataset: the MAC vendor (OUI) database, imported by the user from Ringmast4r's `master_oui.db` (not bundled: it includes GPLv2 Wireshark and Nmap data). SQLite storage with normalized prefixes and nibble lengths, validated imports, atomic replace, and a version history with time, source, SHA-256 and row count.
 - MCP tools `lookup_mac` (up to 50 MACs in any common format, longest-prefix match over MA-S, MA-M and MA-L, locally administered and multicast flags, explicit `No match`, citations like `cyberdrive:oui@v3#00:00:0C`) and `search_oui_vendor`. Both are read-only, offered only to keys with an explicit dataset grant (whole-drive keys need one too), and every call is logged in Activity.
 - **OUI database** admin page (upload, **Refresh from source**, version and history, keys with access), dataset checkboxes on **Agent keys**, and dataset-only keys.
@@ -37,6 +45,8 @@ All notable changes to this project are recorded here. Dates are in ISO format.
 - Deploy QA workflow (`.github/workflows/deploy-qa.yml`): deploys the image with `docker-compose.yml` (built on pull requests, or a published tag on manual runs) and runs `scripts/e2e.ts` against it: setup, uploads, keys, MCP over HTTP, share links, restart persistence, `THUMBDRIVE_ADMIN_PASSWORD`, Host checks and the admin CLI. On main it runs twice: once on an image built from source, and once on the image the Docker workflow published to GHCR (`:sha-<commit>`, checked against `:edge`).
 
 ### Changed
+- Light theme success colour darkened to `#166b3f` (WCAG AA contrast for badges).
+- The drive tools check ("exactly four read-only tools") in `scripts/e2e.ts` now expects eight: the drive tools plus the table tools.
 - `docker-compose.yml`, the Portainer guide and the README now use `:edge` (main). `:m3` and `:m1` still work.
 
 ### Fixed

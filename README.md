@@ -89,6 +89,8 @@ The UI is served at `/` on the same port as `/mcp`. See the [Web UI guide](docs/
 | Share links | Give a person read-only browser access to one folder: 1 hour, 1 day (default), 7 days or 30 days. Links are random 256-bit tokens stored as hashes. Revoke any time |
 | OUI database | CyberDrive: import or refresh the MAC vendor (OUI) database, see its version, rows, source and SHA-256, and which keys can query it. See [docs/cyberdrive.md](docs/cyberdrive.md) |
 | Windows events | CyberDrive: the same for Microsoft's Windows security audit events catalog |
+| NIST SP 800-53, NIST CSF 2.0, CSF ↔ 800-53 map | CyberDrive: the same for NIST's control catalogs and their mapping |
+| Tables | CyberDrive: create typed tables (blank, **Server inventory** or **IP plan / VLANs**), edit them in a spreadsheet-style grid, paste from Excel, import CSV/XLSX, publish versions with a note, roll back. See [docs/tables.md](docs/tables.md) |
 | Activity | Every agent read (key, tool, path, time), filterable by key, action and path; optionally your own changes and share-link downloads |
 | Settings | Change the admin password (signs out every other session) |
 
@@ -155,6 +157,21 @@ CyberDrive adds read-only security reference datasets that agents query with cit
 | `map_control(ids)` | NIST's CSF 2.0 to SP 800-53 informative references, in both directions |
 
 The datasets are not bundled (the OUI data includes GPLv2 Wireshark and Nmap data; the Windows catalog is Microsoft's download; the NIST files are public domain but large and versioned). Import them from their pages in the web UI (upload, or **Refresh from source**) or with `npm run admin -- cyberdrive <dataset> import` (`oui`, `winevent`, `nist80053`, `csf2`, `csf2map`). The Windows catalog is Microsoft's 2016 list: it does not cover newer Windows 10/11 events or Sysmon. Keys get each dataset's tools only when you grant that dataset; a whole-drive key does not get it automatically. Every lookup is logged. Details, the access model, output format and license note: [docs/cyberdrive.md](docs/cyberdrive.md).
+
+### Tables
+
+Tables are your own typed data, such as a server inventory or an IP plan. A table lives at a folder path (`/inventory/servers`), so keys and share links that cover the folder cover the table. Edits go to a draft. **Publish** (with a note) creates version N, agents read only the latest published version, and **Roll back** republishes an old version in one click. Invalid IPs, MACs, CIDRs, CVE IDs, emails and the like are shown in red and block publishing.
+
+| Tool | What it does |
+| --- | --- |
+| `list_tables(path)` | Published tables you can see |
+| `describe_table(table)` | Columns, types, key column, row count, version |
+| `lookup_row(table, values)` | Up to 50 key values, normalized by type (hostnames case-insensitive, MACs in any format, IPs canonical). In a CIDR-keyed table an IP returns the containing range with the longest prefix. Citations like `cyberdrive:/inventory/servers@v3#r12`, explicit `No match` |
+| `query_table(table, filters, ...)` | Filters with `eq`, `neq`, `contains`, `starts_with`, `gt`, `lt`, `in` and `is_empty`, bound as parameters (no SQL from agents), with limit and paging |
+
+![Server inventory grid](docs/images/tables-grid-light.png)
+
+The grid uses Tabulator 6.7.1 (MIT), vendored and served by the app: see [docs/third-party-licenses.md](docs/third-party-licenses.md). Details: [docs/tables.md](docs/tables.md).
 
 ## Admin CLI
 

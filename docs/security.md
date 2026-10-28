@@ -71,9 +71,11 @@ Every UI page is sent with:
 
 The UI has no inline scripts or styles, so the CSP doesn't need `unsafe-inline`. Pages are rendered on the server, and every value is escaped.
 
+**Tables** ([docs/tables.md](tables.md)): every grid save, paste, import, publish, rollback and column change is a POST with the CSRF token (the `x-csrf-token` header for the grid's JSON requests). The grid script and Tabulator are served from the app's own origin, so the CSP is unchanged. Agents can only read published versions. `query_table` filters use a fixed operator list, column names are resolved against the table's own columns, and values are bound as SQL parameters. CSV exports guard against formula injection.
+
 **Downloads** from the UI and from share links are always sent as `application/octet-stream` attachments with `Content-Security-Policy: sandbox; default-src 'none'`. An uploaded HTML or SVG file can't run in Thumbdrive's origin. Each download also carries its SHA-256 in `X-Thumbdrive-SHA256`.
 
-**Body limits.** Uploads may be up to `MAX_FILE_MB` plus 1 MB. Other forms are limited to 256 KB, and `/mcp` requests to 1 MB.
+**Body limits.** Uploads may be up to `MAX_FILE_MB` plus 1 MB. Dataset and table imports may be up to `DATASET_MAX_MB`, and table grid saves and pastes up to 8 MB. Other forms are limited to 256 KB, and `/mcp` requests to 1 MB.
 
 ## Host and Origin allow-list
 
