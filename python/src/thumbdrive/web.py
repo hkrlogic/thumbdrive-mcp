@@ -73,28 +73,27 @@ class Web:
 
     def _post(self, handler: Handler) -> Handler:
         async def checked(request: Request) -> Response:
-            problem = await self._check_post(request)
-            if problem:
-                return PlainTextResponse(problem, 403)
-            return await handler(request)
+            return await self._check_post(request) or await handler(request)
 
         return checked
 
-    async def _check_post(self, request: Request) -> str | None:
+    async def _check_post(self, request: Request) -> Response | None:
+        """The refusal for a POST that fails the checks, or None when it may proceed."""
         site = request.headers.get("sec-fetch-site")
         if site and site not in ("same-origin", "none"):
-            return "Cross-site request refused"
+            return PlainTextResponse("Cross-site request refused", 403)
         origin = request.headers.get("origin")
         if origin is not None and origin.split("://", 1)[-1] != request.headers.get("host"):
-            return "Cross-origin request refused"
+            return PlainTextResponse("Cross-origin request refused", 403)
         max_bytes = (self.config.max_file_mb + 1) * 1024 * 1024
         if int(request.headers.get("content-length") or 0) > max_bytes:
-            return "Request too large"
+            limit = f"{self.config.max_file_mb} MB limit (MAX_FILE_MB)"
+            return PlainTextResponse(f"Upload refused: larger than the {limit}. Go back and pick a smaller file.", 413)
         form = await request.form(max_files=200, max_fields=100)
         sent = request.headers.get("x-csrf-token") or str(form.get("_csrf", ""))
         browser = request.cookies.get(SESSION) or request.cookies.get(PRE)
         if not browser or sent != auth.csrf_token(self.db, browser):
-            return "Invalid or missing CSRF token. Reload the page and try again."
+            return PlainTextResponse("Invalid or missing CSRF token. Reload the page and try again.", 403)
         return None
 
     def _render(self, request: Request, template: str, status: int = 200, **context: object) -> Response:
@@ -146,8 +145,8 @@ class Web:
             return RedirectResponse("/login", 303)
         if request.method == "GET":
             return self._render(request, "login.html", setup=True)
-        if problem := await self._check_post(request):
-            return PlainTextResponse(problem, 403)
+        if refused := await self._check_post(request):
+            return refused
         password, again = await self._field(request, "password"), await self._field(request, "confirm")
         if password != again:
             return self._render(request, "login.html", 400, setup=True, error="The passwords do not match")
@@ -162,8 +161,8 @@ class Web:
             return RedirectResponse("/setup", 303)
         if request.method == "GET":
             return self._render(request, "login.html", setup=False)
-        if problem := await self._check_post(request):
-            return PlainTextResponse(problem, 403)
+        if refused := await self._check_post(request):
+            return refused
         client = self._client(request)
         if self.limiter.blocked(client):
             return self._render(request, "login.html", 429, error="Too many attempts. Wait 15 minutes.")

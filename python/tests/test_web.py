@@ -1,5 +1,8 @@
-from conftest import PASSWORD, csrf_of
+from conftest import PASSWORD, csrf_of, make_config
 from starlette.testclient import TestClient
+
+from thumbdrive import auth
+from thumbdrive.app import create_app
 
 
 def test_first_run_setup_then_login(client: TestClient) -> None:
@@ -65,6 +68,24 @@ def test_upload_browse_download_versions_restore(admin: TestClient) -> None:
     assert admin.get("/files/download", params={"path": "/docs/a.txt"}).content == b"first"
 
 
+def test_oversized_upload_is_refused_with_the_limit(tmp_path) -> None:
+    app = create_app(make_config(tmp_path, max_file_mb=1))
+    with TestClient(app, follow_redirects=False) as client:
+        auth.set_password(app.state.db, PASSWORD)
+        client.post("/login", data={"password": PASSWORD, "_csrf": csrf_of(client.get("/login").text)})
+        token = csrf_of(client.get("/files").text)
+
+        def upload(size: int):
+            files = [("files", ("big.bin", b"x" * size, "application/octet-stream"))]
+            return client.post("/files/upload", data={"path": "/", "_csrf": token}, files=files)
+
+        over_file_limit = upload(1024 * 1024 + 10)
+        assert "larger%20than%201%20MB" in over_file_limit.headers["location"]
+        over_request_limit = upload(3 * 1024 * 1024)
+        assert over_request_limit.status_code == 413 and "1 MB limit" in over_request_limit.text
+        assert "big.bin" not in client.get("/files").text
+
+
 def test_rename_and_delete(admin: TestClient) -> None:
     token = csrf_of(admin.get("/files").text)
     admin.post("/files/upload", data={"path": "/", "_csrf": token}, files=[("files", ("a.txt", b"x", "text/plain"))])
@@ -103,3 +124,28 @@ def test_admin_password_from_environment(tmp_path) -> None:
         assert c.get("/setup").headers["location"] == "/login"
         token = csrf_of(c.get("/login").text)
         assert c.post("/login", data={"password": PASSWORD, "_csrf": token}).status_code == 303
+
+
+def test_startup_banner_reaches_piped_logs(tmp_path) -> None:
+    """`docker logs` and nohup pipe stdout; the setup hint must not sit in a buffer."""
+    import os
+    import socket
+    import subprocess
+    import sys
+    import threading
+
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        port = str(s.getsockname()[1])
+    env = os.environ | {"DATA_DIR": str(tmp_path / "data"), "THUMBDRIVE_PORT": port}
+    env.pop("PYTHONUNBUFFERED", None)
+    proc = subprocess.Popen([sys.executable, "-m", "thumbdrive"], env=env, stdout=subprocess.PIPE, text=True)
+    lines: list[str] = []
+    reader = threading.Thread(target=lambda: lines.append(proc.stdout.readline() if proc.stdout else ""), daemon=True)
+    try:
+        reader.start()
+        reader.join(15)
+        assert lines and f"{port}/setup" in lines[0], "no setup hint on piped stdout"
+    finally:
+        proc.kill()
+        proc.wait(5)

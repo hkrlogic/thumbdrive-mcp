@@ -3,6 +3,7 @@
 import argparse
 import dataclasses
 import os
+import sys
 from pathlib import Path
 
 import uvicorn
@@ -75,6 +76,7 @@ def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="thumbdrive", description="Read-only MCP drive for agents.")
     parser.add_argument("--dev", action="store_true", help="use ./dev-data and seed sample files and a key")
     args = parser.parse_args(argv)
+    sys.stdout.reconfigure(line_buffering=True)  # type: ignore[union-attr]  # docker logs and nohup pipe stdout
     config = from_env()
     if args.dev and "DATA_DIR" not in os.environ:
         config = dataclasses.replace(config, data_dir=Path("dev-data"))
