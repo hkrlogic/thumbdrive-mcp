@@ -3,10 +3,11 @@
  * cookies are kept per "browser", forms post their CSRF token.
  */
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { after, test } from "node:test";
 import { serve } from "@hono/node-server";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
@@ -635,4 +636,72 @@ test("connection snippets use the real URL and add --allow-http only for plain H
   assert.ok(!JSON.parse(find("https://drive.example.com/mcp", "claude")).mcpServers.thumbdrive.args.includes("--allow-http"));
   const cursor = JSON.parse(find("https://drive.example.com/mcp", "cursor"));
   assert.deepEqual(cursor.mcpServers.thumbdrive, { url: "https://drive.example.com/mcp", headers: { Authorization: "Bearer td_abc" } });
+});
+
+// ---------- CyberDrive datasets ----------
+
+function ouiFixture(rows: Array<[string, string]>): Blob {
+  const dir = mkdtempSync(path.join(tmpdir(), "oui-fx-"));
+  after(() => rmSync(dir, { recursive: true, force: true }));
+  const file = path.join(dir, "master_oui.db");
+  const db = new DatabaseSync(file);
+  const cols = "oui, manufacturer, registry, short_name, device_type, registered_date, address, sources, status, deregistered_date";
+  db.exec(`CREATE TABLE oui_registry (${cols.split(", ").map((c) => `${c} TEXT`).join(", ")})`);
+  const insert = db.prepare("INSERT INTO oui_registry (oui, manufacturer, registry, status) VALUES (?, ?, 'MA-L', 'current')");
+  for (const [oui, m] of rows) insert.run(oui, m);
+  db.close();
+  return new Blob([readFileSync(file)]);
+}
+
+test("OUI database page: upload imports a new version, bad files are rejected, CSRF is required", async () => {
+  const { app, datasets } = setup();
+  const b = await signedIn(app);
+  const empty = await b.page("/datasets/oui");
+  assert.equal(empty.status, 200);
+  assert.match(empty.html, /Not imported yet/);
+  assert.match(empty.html, /Refresh from source/);
+  assert.match(empty.html, /href="\/datasets\/oui"/, "nav links the page");
+
+  const up = await b.post("/datasets/oui/import", {}, { from: "/datasets/oui", files: [["file", ouiFixture([["00:00:0C", "Cisco"]]), "master_oui.db"]] });
+  assert.equal(up.status, 303);
+  const after1 = await flashOf(b, up.headers.get("location"));
+  assert.match(after1, /Imported version 1: 1 rows/);
+  assert.match(after1, /upload:master_oui.db/);
+  assert.equal(datasets.current("oui")?.version, 1);
+
+  const bad = await b.post("/datasets/oui/import", {}, { from: "/datasets/oui", files: [["file", new Blob([text("nope")]), "x.db"]] });
+  assert.match(await flashOf(b, bad.headers.get("location")), /Not a SQLite database file/);
+  assert.equal(datasets.current("oui")?.version, 1);
+
+  const forged = await b.post("/datasets/oui/import", {}, { csrf: "forged", files: [["file", ouiFixture([["00:00:0C", "X"]]), "a.db"]] });
+  assert.equal(forged.status, 403);
+  assert.equal((await b.fetch("/datasets/nope")).status, 404);
+});
+
+test("dataset uploads have their own size limit", async () => {
+  const drive = tempDrive();
+  const keys = keysFor(drive);
+  const { app, close } = createApp({ drive, keys, config: testConfig(drive, { datasetMaxBytes: 4096 }) });
+  after(() => close());
+  const b = await signedIn(app);
+  const res = await b.post("/datasets/oui/import", {}, { from: "/datasets/oui", files: [["file", new Blob([new Uint8Array(64 * 1024 + 2 * 1024 * 1024)]), "big.db"]] });
+  assert.equal(res.status, 413);
+  assert.match(await res.text(), /DATASET_MAX_MB/);
+});
+
+test("keys page grants datasets, and the grant reaches MCP", async () => {
+  const { app, keys } = setup();
+  const b = await signedIn(app);
+  const page = await b.page("/keys");
+  assert.match(page.html, /name="datasets" value="oui"/);
+  const res = await b.post("/keys", { name: "cyber-agent", datasets: "oui" }, { from: "/keys" });
+  assert.equal(res.status, 200);
+  const html = await res.text();
+  assert.match(html, /cyberdrive:oui/);
+  const record = keys.list().find((k) => k.name === "cyber-agent");
+  assert.deepEqual(record?.datasets, ["oui"]);
+  assert.deepEqual(record?.folders, []);
+  const edit = await b.post(`/keys/${record?.id}/folders`, { folders: "/" }, { from: "/keys" });
+  assert.equal(edit.status, 303);
+  assert.deepEqual(keys.get(record?.id ?? 0)?.datasets, [], "unchecked datasets are removed");
 });

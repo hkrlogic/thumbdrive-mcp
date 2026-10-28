@@ -1,7 +1,7 @@
 /**
  * End-to-end check of a running server, the way a user and an agent use it:
  * web UI over HTTP (setup, login, CSRF, folders, uploads, keys, share links,
- * password change), MCP over Streamable HTTP with the official SDK client, and
+ * password change, the CyberDrive OUI database page), MCP over Streamable HTTP with the official SDK client, and
  * the Host-header guard. Used by .github/workflows/deploy-qa.yml against the
  * published image, and runnable against a local server.
  *
@@ -18,8 +18,11 @@
  */
 import { execFileSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import http from "node:http";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 
 const base = (process.argv[2] ?? "http://127.0.0.1:8484").replace(/\/+$/, "");
@@ -173,7 +176,31 @@ function fixtures() {
   return { txt, csv, pdf: new Uint8Array(pdf), xlsx: new Uint8Array(xlsx), bin: new Uint8Array(bin) };
 }
 
-type State = { key: string; scopedKey: string; revokedKey: string; share: string; files: Record<string, string> };
+/** A two-row look-alike of master_oui.db (the real one is ~20 MB and GPL-licensed; users import it). */
+function ouiFixture(): Uint8Array {
+  const dir = mkdtempSync(join(tmpdir(), "td-e2e-oui-"));
+  const file = join(dir, "master_oui.db");
+  const db = new DatabaseSync(file);
+  db.exec(
+    "CREATE TABLE oui_registry (oui TEXT, manufacturer TEXT, registry TEXT, short_name TEXT, device_type TEXT, registered_date TEXT, address TEXT, sources TEXT, status TEXT, deregistered_date TEXT)",
+  );
+  db.exec(
+    "INSERT INTO oui_registry (oui, manufacturer, registry, short_name, status) VALUES ('00:00:0C', 'Cisco', 'MA-L', 'Cisco', 'current'), ('8C:1F:64:AF:A', 'DATA ELECTRONIC DEVICES, INC', 'MA-S', 'DataElectron', 'current')",
+  );
+  db.close();
+  const bytes = new Uint8Array(readFileSync(file));
+  rmSync(dir, { recursive: true, force: true });
+  return bytes;
+}
+
+type State = {
+  key: string;
+  scopedKey: string;
+  revokedKey: string;
+  cyberKey?: string;
+  share: string;
+  files: Record<string, string>;
+};
 
 // ---------- phases ----------
 
@@ -406,6 +433,9 @@ async function full(b: Browser) {
   const act = await b.page("/activity?key=e2e-team");
   check(act.html.includes("/team/policy.txt") && act.html.includes("e2e-team"), "activity shows the agent's reads, filtered by key");
 
+  section("CyberDrive OUI database");
+  const cyberKey = await cyberdrive(b, key);
+
   section("share links");
   await b.page("/shares");
   let sh = await b.submit("/shares", { folder: "/team", hours: "1", label: "for Sam" });
@@ -459,8 +489,47 @@ async function full(b: Browser) {
   const lo = await b.submit("/logout", {});
   check((await b.req("/")).status === 303 && lo.html.includes("Signed out"), "logout");
 
-  const state: State = { key, scopedKey, revokedKey, share, files: { "/team/blob.bin": sha(f.bin), "/team/sales.csv": sha(f.csv) } };
+  const state: State = { key, scopedKey, revokedKey, cyberKey, share, files: { "/team/blob.bin": sha(f.bin), "/team/sales.csv": sha(f.csv) } };
   writeFileSync(stateFile, JSON.stringify(state));
+}
+
+async function lookupCisco(cyberKey: string) {
+  const { client, call } = await mcp(cyberKey);
+  const r = await call("lookup_mac", { macs: ["00-00-0c-12-34-56", "8c1f.64af.a000", "02:00:00:00:00:01"] });
+  await client.close();
+  return r.meta as { version: number; results: Array<{ result: string; match?: { manufacturer: string; citation: string } }> } | undefined;
+}
+
+async function cyberdrive(b: Browser, wholeDriveKey: string): Promise<string> {
+  let page = await b.page("/datasets/oui");
+  check(page.res.status === 200 && page.html.includes("Refresh from source"), "OUI database page renders");
+  const fd = new FormData();
+  fd.set("_csrf", b.csrf);
+  fd.append("file", new Blob([ouiFixture() as Uint8Array<ArrayBuffer>]), "master_oui.db");
+  const up = await b.req("/datasets/oui/import", { method: "POST", body: fd });
+  page = await b.page("/datasets/oui");
+  check(up.status === 303 && /Imported version \d+: 2 rows/.test(page.html), "upload a fixture OUI database");
+  const bad = new FormData();
+  bad.set("_csrf", b.csrf);
+  bad.append("file", new Blob(["not a database"]), "bad.db");
+  await b.req("/datasets/oui/import", { method: "POST", body: bad });
+  check(/Not a SQLite database file/.test((await b.page("/datasets/oui")).html), "a non-SQLite upload is refused");
+  await b.page("/keys");
+  const k = await b.submit("/keys", { name: "e2e-cyber", datasets: "oui" });
+  const cyberKey = k.html.match(/td_[A-Za-z0-9_-]{43}/)?.[0] ?? "";
+  check(cyberKey && k.html.includes("cyberdrive:oui"), "create a dataset-only key");
+  const out = await lookupCisco(cyberKey);
+  const [cisco, mas, local] = out?.results ?? [];
+  check(cisco?.match?.manufacturer === "Cisco" && /^cyberdrive:oui@v\d+#00:00:0C$/.test(cisco.match.citation), "lookup_mac finds Cisco with a citation");
+  check(mas?.match?.manufacturer === "DATA ELECTRONIC DEVICES, INC", "lookup_mac prefers the MA-S block");
+  check(local?.result === "locally administered" && !local.match, "locally administered MAC gets no vendor");
+  const plain = await mcp(wholeDriveKey);
+  const tools = (await plain.client.listTools()).tools.map((t) => t.name);
+  await plain.client.close();
+  check(!tools.includes("lookup_mac"), "a whole-drive key without the grant does not see lookup_mac");
+  const act = await b.page("/activity?key=e2e-cyber");
+  check(act.html.includes("lookup_mac"), "lookups show in activity");
+  return cyberKey;
 }
 
 async function afterRestart() {
@@ -480,6 +549,10 @@ async function afterRestart() {
   check((await mcpStatus(st.scopedKey)) === 200, "scoped key still works");
   check((await mcpStatus(st.revokedKey)) === 401, "revoked key still revoked");
   check((await fetch(st.share)).status === 200, "share link still works");
+  if (st.cyberKey) {
+    const out = await lookupCisco(st.cyberKey);
+    check(out?.results[0]?.match?.manufacturer === "Cisco", "OUI database and the dataset grant survived");
+  }
   await b.page("/shares");
   const id = (await b.page("/shares")).html.match(/action="\/shares\/(\d+)\/revoke"/)?.[1];
   await b.submit(`/shares/${id}/revoke`, {});
