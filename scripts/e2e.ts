@@ -1,7 +1,8 @@
 /**
  * End-to-end check of a running server, the way a user and an agent use it:
  * web UI over HTTP (setup, login, CSRF, folders, uploads, keys, share links,
- * password change, the CyberDrive OUI database page), MCP over Streamable HTTP with the official SDK client, and
+ * password change, the CyberDrive dataset pages: OUI, Windows events, NIST
+ * SP 800-53, CSF 2.0 and the CSF map), MCP over Streamable HTTP with the official SDK client, and
  * the Host-header guard. Used by .github/workflows/deploy-qa.yml against the
  * published image, and runnable against a local server.
  *
@@ -24,6 +25,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
+import { csf2Catalog, csf2MapWorkbook, sp80053Catalog } from "../test/fixtures/controls.ts";
+import { xlsx } from "../test/xlsx.ts";
 
 const base = (process.argv[2] ?? "http://127.0.0.1:8484").replace(/\/+$/, "");
 const phase = process.argv[3] ?? "first-run";
@@ -198,6 +201,7 @@ type State = {
   scopedKey: string;
   revokedKey: string;
   cyberKey?: string;
+  grcKey?: string;
   share: string;
   files: Record<string, string>;
 };
@@ -436,6 +440,9 @@ async function full(b: Browser) {
   section("CyberDrive OUI database");
   const cyberKey = await cyberdrive(b, key);
 
+  section("CyberDrive Windows events and NIST control frameworks");
+  const grcKey = await moreDatasets(b, cyberKey);
+
   section("share links");
   await b.page("/shares");
   let sh = await b.submit("/shares", { folder: "/team", hours: "1", label: "for Sam" });
@@ -489,7 +496,7 @@ async function full(b: Browser) {
   const lo = await b.submit("/logout", {});
   check((await b.req("/")).status === 303 && lo.html.includes("Signed out"), "logout");
 
-  const state: State = { key, scopedKey, revokedKey, cyberKey, share, files: { "/team/blob.bin": sha(f.bin), "/team/sales.csv": sha(f.csv) } };
+  const state: State = { key, scopedKey, revokedKey, cyberKey, grcKey, share, files: { "/team/blob.bin": sha(f.bin), "/team/sales.csv": sha(f.csv) } };
   writeFileSync(stateFile, JSON.stringify(state));
 }
 
@@ -532,6 +539,85 @@ async function cyberdrive(b: Browser, wholeDriveKey: string): Promise<string> {
   return cyberKey;
 }
 
+/** Upload a fixture through a dataset page; returns the page's text after the redirect. */
+async function importDataset(b: Browser, name: string, bytes: Uint8Array, filename: string) {
+  await b.page(`/datasets/${name}`);
+  const fd = new FormData();
+  fd.set("_csrf", b.csrf);
+  fd.append("file", new Blob([bytes as Uint8Array<ArrayBuffer>]), filename);
+  const up = await b.req(`/datasets/${name}/import`, { method: "POST", body: fd });
+  const loc = up.headers.get("location") ?? `/datasets/${name}`;
+  return { status: up.status, html: (await b.page(new URL(loc, base).pathname + new URL(loc, base).search)).html };
+}
+
+function wineventFixture() {
+  return xlsx({
+    "Security Audit Events": [
+      ["Category", "Subcategory", "Event ID", "Message Summary", "Minimum Operating System Requirement"],
+      ["Logon/Logoff", "Logon", 4624, "An account was successfully logged on.", "Windows Vista, Windows Server 2008"],
+      ["Account Management", "User Account Management", 4720, "A user account was created.", "Windows Vista, Windows Server 2008"],
+    ],
+    "Complete Event Messages": [
+      ["Event ID", "Version", "Detailed Message", "Minimum Operating System Requirement"],
+      [4624, 0, "An account was successfully logged on.\r\n\r\nSubject:\r\n\tSecurity ID:\t\t%1", "Windows Vista, Windows Server 2008"],
+      [4720, 0, "A user account was created.", "Windows Vista, Windows Server 2008"],
+    ],
+  });
+}
+
+type Found = { result: string; id?: string; title?: string; citation?: string; withdrawn?: boolean; maps_to?: Array<{ id: string }> };
+async function grcLookups(grcKey: string) {
+  const { client, call } = await mcp(grcKey);
+  const tools = (await client.listTools()).tools.map((t) => t.name);
+  const ev = (await call("lookup_windows_event", { ids: [4624, 9999] })).meta as { results: Array<{ result: string; summary?: string; citation?: string }> } | undefined;
+  const ctl = (await call("lookup_control", { ids: ["ac-2(1)", "AC-13", "PR.AA-01", "AC-99"] })).meta as { results: Found[] } | undefined;
+  const map = (await call("map_control", { ids: ["PR.AA-01", "AC-2(1)"] })).meta as { results: Found[] } | undefined;
+  await client.close();
+  return { tools, ev: ev?.results ?? [], ctl: ctl?.results ?? [], map: map?.results ?? [] };
+}
+
+function checkGrc(r: Awaited<ReturnType<typeof grcLookups>>, when: string) {
+  const [logon, none] = r.ev;
+  check(logon?.result === "match" && /^cyberdrive:winevent@v\d+#4624$/.test(logon.citation ?? ""), `${when}: lookup_windows_event explains 4624 with a citation`);
+  check(none?.result === "No match", `${when}: an unknown event ID is an explicit No match`);
+  const [enh, withdrawn, csf, missing] = r.ctl;
+  check(enh?.id === "AC-2(1)" && /^cyberdrive:nist80053@v\d+#AC-2\(1\)$/.test(enh.citation ?? ""), `${when}: lookup_control finds ac-2(1) with a citation`);
+  check(withdrawn?.withdrawn === true, `${when}: AC-13 shows as withdrawn`);
+  check(csf?.id === "PR.AA-01" && /^cyberdrive:csf2@v\d+#PR\.AA-01$/.test(csf.citation ?? ""), `${when}: lookup_control finds CSF PR.AA-01`);
+  check(missing?.result === "No match", `${when}: an unknown control is an explicit No match`);
+  const [fwd, back] = r.map;
+  const fwdIds = (fwd?.maps_to ?? []).map((m) => m.id);
+  check(fwdIds.includes("AC-2") && fwdIds.includes("IA-2"), `${when}: map_control maps PR.AA-01 to SP 800-53`);
+  check((back?.maps_to ?? []).some((m) => m.id === "PR.AA-01"), `${when}: map_control maps AC-2(1) back to PR.AA-01 via AC-2`);
+}
+
+async function moreDatasets(b: Browser, ouiOnlyKey: string): Promise<string> {
+  const win = await importDataset(b, "winevent", wineventFixture(), "audit-events.xlsx");
+  check(win.status === 303 && /Imported version \d+: 2 events/.test(win.html), "upload a fixture Windows events workbook");
+  const nist = await importDataset(b, "nist80053", sp80053Catalog(), "NIST_SP-800-53_rev5_catalog.json");
+  check(nist.status === 303 && /Imported version \d+: 7 controls/.test(nist.html), "upload a fixture SP 800-53 OSCAL catalog");
+  const csf = await importDataset(b, "csf2", csf2Catalog(), "NIST_CSF_v2.0_catalog.json");
+  check(csf.status === 303 && /Imported version \d+: 10 items/.test(csf.html), "upload a fixture CSF 2.0 OSCAL catalog");
+  const map = await importDataset(b, "csf2map", csf2MapWorkbook(), "csf2.xlsx");
+  check(map.status === 303 && /Imported version \d+: 7 mappings/.test(map.html), "upload a fixture CSF 2.0 Reference Tool workbook");
+  const bad = await importDataset(b, "nist80053", csf2Catalog(), "wrong.json");
+  check(/Not an SP 800-53 catalog/.test(bad.html), "a CSF catalog uploaded as SP 800-53 is refused (the imported version stays, checked by the lookups below)");
+  await b.page("/keys");
+  const k = await b.submit("/keys", { name: "e2e-grc", datasets: ["winevent", "nist80053", "csf2", "csf2map"] });
+  const grcKey = k.html.match(/td_[A-Za-z0-9_-]{43}/)?.[0] ?? "";
+  check(grcKey !== "" && k.html.includes("cyberdrive:nist80053"), "create a key granted Windows events and the NIST datasets");
+  const r = await grcLookups(grcKey);
+  check(["lookup_windows_event", "lookup_control", "search_controls", "map_control"].every((t) => r.tools.includes(t)) && !r.tools.includes("lookup_mac"), "the key sees exactly its granted dataset tools");
+  checkGrc(r, "first run");
+  const oui = await mcp(ouiOnlyKey);
+  const ouiTools = (await oui.client.listTools()).tools.map((t) => t.name);
+  await oui.client.close();
+  check(!ouiTools.includes("lookup_control") && !ouiTools.includes("lookup_windows_event"), "the OUI-only key does not see the new tools");
+  const act = await b.page("/activity?key=e2e-grc");
+  check(["lookup_windows_event", "lookup_control", "map_control"].every((t) => act.html.includes(t)), "dataset lookups show in activity");
+  return grcKey;
+}
+
 async function afterRestart() {
   await common();
   const st = JSON.parse(readFileSync(stateFile, "utf8")) as State;
@@ -553,6 +639,7 @@ async function afterRestart() {
     const out = await lookupCisco(st.cyberKey);
     check(out?.results[0]?.match?.manufacturer === "Cisco", "OUI database and the dataset grant survived");
   }
+  if (st.grcKey) checkGrc(await grcLookups(st.grcKey), "after restart");
   await b.page("/shares");
   const id = (await b.page("/shares")).html.match(/action="\/shares\/(\d+)\/revoke"/)?.[1];
   await b.submit(`/shares/${id}/revoke`, {});
