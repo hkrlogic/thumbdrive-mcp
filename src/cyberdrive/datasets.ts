@@ -17,7 +17,7 @@ import { nowIso, transaction } from "../storage/db.ts";
 import type { Drive } from "../storage/drive.ts";
 
 /** Every dataset a key can be granted. */
-export const DATASET_NAMES = ["oui", "winevent"] as const;
+export const DATASET_NAMES = ["oui", "winevent", "nist80053", "csf2", "csf2map"] as const;
 export type DatasetName = (typeof DATASET_NAMES)[number];
 
 export function isDatasetName(name: string): name is DatasetName {
@@ -49,6 +49,8 @@ export interface DatasetKind {
   defaultUrl: string;
   /** What the admin uploads, for the UI and errors. */
   fileHint: string;
+  /** Optional provenance or license note shown on the dataset page. */
+  about?: string;
   /** Validate and parse a source file saved at `file` (bytes are the same content). Throws DatasetError. */
   parse: (file: string, bytes: Uint8Array) => ParsedDataset | Promise<ParsedDataset>;
 }

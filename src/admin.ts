@@ -11,7 +11,7 @@
  *   npm run admin -- ls [drive-path]
  *   npm run admin -- history <drive-path>
  *   npm run admin -- restore <drive-path> <version>
- *   npm run admin -- key create <name> [--folder <drive-folder> ...] [--dataset oui|winevent ...]
+ *   npm run admin -- key create <name> [--folder <drive-folder> ...] [--dataset oui|winevent|nist80053|csf2|csf2map ...]
  *   npm run admin -- key datasets <name> [dataset ...]
  *   npm run admin -- key list
  *   npm run admin -- key revoke <name>
@@ -23,6 +23,11 @@
  *   npm run admin -- cyberdrive winevent import [path-or-url] | status
  *   npm run admin -- cyberdrive winevent lookup <event-id> [event-id ...]
  *   npm run admin -- cyberdrive winevent search <text> [--category <category>]
+ *   npm run admin -- cyberdrive nist80053|csf2 import [path-or-url] | status
+ *   npm run admin -- cyberdrive nist80053|csf2 lookup <control-id> [control-id ...]
+ *   npm run admin -- cyberdrive nist80053|csf2 search [text] [--family <family>] [--withdrawn]
+ *   npm run admin -- cyberdrive csf2map import [path-or-url] | status
+ *   npm run admin -- cyberdrive csf2map map <control-id> [control-id ...]
  *   npm run admin -- set-password          (prompts; or pipe the password on stdin)
  */
 import { readFileSync, readdirSync, statSync } from "node:fs";
@@ -30,6 +35,7 @@ import path from "node:path";
 import { KeyStore } from "./auth/keys.ts";
 import { createInterface } from "node:readline";
 import { loadConfig } from "./config.ts";
+import { ControlLookup } from "./cyberdrive/controls.ts";
 import { DATASET_NAMES, isDatasetName } from "./cyberdrive/datasets.ts";
 import { createDatasetStore } from "./cyberdrive/index.ts";
 import { OuiLookup } from "./cyberdrive/oui.ts";
@@ -59,6 +65,9 @@ const USAGE = [
   "cyberdrive oui search <vendor>",
   "cyberdrive winevent lookup <event-id> [event-id ...]",
   "cyberdrive winevent search [text] [--category <category>]",
+  "cyberdrive nist80053|csf2 lookup <control-id> [control-id ...]   (e.g. AC-2 IA-2(1) PR.AA-01)",
+  "cyberdrive nist80053|csf2 search [text] [--family <family>] [--withdrawn]",
+  "cyberdrive csf2map map <control-id> [control-id ...]",
   "set-password",
 ]
   .map((line) => `  admin ${line}`)
@@ -249,6 +258,20 @@ async function main(argv: string[]): Promise<void> {
           const category = at >= 0 ? args[at + 1] : undefined;
           const words = at >= 0 ? [...args.slice(0, at), ...args.slice(at + 2)] : args;
           console.log(JSON.stringify(new WinEventLookup(datasets).search(words.join(" ") || undefined, { category }), null, 2));
+        } else if (sub === "lookup" && (name === "nist80053" || name === "csf2")) {
+          if (args.length === 0) usage(`cyberdrive ${name} lookup needs <control-id>`);
+          console.log(JSON.stringify(new ControlLookup(datasets).lookup(args), null, 2));
+        } else if (sub === "search" && (name === "nist80053" || name === "csf2")) {
+          const at = args.indexOf("--family");
+          const family = at >= 0 ? args[at + 1] : undefined;
+          const words = (at >= 0 ? [...args.slice(0, at), ...args.slice(at + 2)] : args).filter((a) => a !== "--withdrawn");
+          const includeWithdrawn = args.includes("--withdrawn");
+          console.log(
+            JSON.stringify(new ControlLookup(datasets).search(words.join(" ") || undefined, { framework: name, family, includeWithdrawn }), null, 2),
+          );
+        } else if (sub === "map" && name === "csf2map") {
+          if (args.length === 0) usage("cyberdrive csf2map map needs <control-id>");
+          console.log(JSON.stringify(new ControlLookup(datasets).map(args), null, 2));
         } else usage(`Unknown cyberdrive command ${sub ?? ""}`);
         break;
       }

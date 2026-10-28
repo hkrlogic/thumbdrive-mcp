@@ -1,6 +1,8 @@
 /**
  * The MCP surface: four read-only file tools, plus CyberDrive lookup tools
- * (lookup_mac, search_oui_vendor) for keys granted the matching dataset.
+ * (lookup_mac, search_oui_vendor, lookup_windows_event, search_windows_events,
+ * lookup_control, search_controls, map_control) for keys granted the
+ * matching dataset.
  * Agents can never change the drive; every tool is annotated readOnlyHint
  * and the server has no write path.
  */
@@ -8,6 +10,7 @@ import { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod/v4";
 import { type Reader, UsageError } from "../agent/reader.ts";
 import type { DatasetReader } from "../cyberdrive/agent.ts";
+import { CONTROLS_MAX_BATCH } from "../cyberdrive/controls.ts";
 import { DatasetError } from "../cyberdrive/datasets.ts";
 import { OUI_MAX_BATCH } from "../cyberdrive/oui.ts";
 import { WINEVENT_MAX_BATCH } from "../cyberdrive/winevent.ts";
@@ -55,6 +58,9 @@ const json = (value: unknown) => JSON.stringify(value, null, 2);
 export function createMcpServer(reader: Reader, datasets?: DatasetReader): McpServer {
   const oui = datasets?.has("oui") ?? false;
   const winevent = datasets?.has("winevent") ?? false;
+  const controls = datasets?.controlFrameworks() ?? [];
+  const controlNames = controls.map((n) => (n === "nist80053" ? "NIST SP 800-53 Rev 5" : "NIST CSF 2.0")).join(" and ");
+  const controlMap = datasets?.has("csf2map") ?? false;
   const server = new McpServer(
     { name: APP_NAME, version: APP_VERSION },
     {
@@ -74,6 +80,15 @@ export function createMcpServer(reader: Reader, datasets?: DatasetReader): McpSe
               "CyberDrive: lookup_windows_event explains Windows Security log event IDs from Microsoft's 2016 audit events catalog. Quote the citation;",
               "if a result says 'No match', say the catalog does not cover it (newer Windows 10/11 events and Sysmon are not in it) instead of guessing.",
             ]
+          : []),
+        ...(controls.length
+          ? [
+              `CyberDrive: lookup_control and search_controls read the official ${controlNames} text. Quote the control text and its citation rather than paraphrasing from memory;`,
+              "if a result says 'No match' or withdrawn, say so (and name the replacement) instead of inventing a control.",
+            ]
+          : []),
+        ...(controlMap
+          ? ["CyberDrive: map_control gives NIST's CSF 2.0 to SP 800-53 informative references; these are supporting references, not equivalences."]
           : []),
       ].join(" "),
     },
@@ -228,6 +243,76 @@ export function createMcpServer(reader: Reader, datasets?: DatasetReader): McpSe
         annotations: READ_ONLY,
       },
       async ({ query, category, limit }) => run(() => ok(json(datasets.searchWindowsEvents(query || undefined, category || undefined, limit)))),
+    );
+  }
+
+  if (datasets && controls.length) {
+    server.registerTool(
+      "lookup_control",
+      {
+        title: "Look up security controls",
+        description: [
+          `Look up 1-${CONTROLS_MAX_BATCH} control IDs in the CyberDrive copy of ${controlNames} (NIST's official OSCAL catalogs).`,
+          "IDs: SP 800-53 controls, enhancements and families (AC-2, ac-2(1), AC-2.1, AC-02(01), AC); CSF 2.0 subcategories, categories and functions (PR.AA-01, GV.OC, GV).",
+          "Each result has result ('match', 'No match' or 'invalid'), framework, family/function, title, statement (parameters shown as [Assignment: ...] / [Selection: ...]),",
+          "guidance (800-53 discussion) or implementation_examples (CSF), enhancements or children, related controls, withdrawn plus withdrawn_to, and a citation like cyberdrive:nist80053@v1#AC-2(1).",
+        ].join(" "),
+        inputSchema: z.object({
+          ids: z.array(z.string().max(64)).min(1).max(CONTROLS_MAX_BATCH).describe("Control IDs, e.g. ['AC-2', 'IA-2(1)', 'PR.AA-01']"),
+        }),
+        annotations: READ_ONLY,
+      },
+      async ({ ids }) => run(() => ok(json(datasets.lookupControls(ids)))),
+    );
+
+    server.registerTool(
+      "search_controls",
+      {
+        title: "Search security controls",
+        description:
+          `Search ${controlNames} in CyberDrive: case-insensitive text in IDs, titles, statements, guidance and CSF implementation examples, optionally within one framework (${controls.join(", ")}) and one family or function (e.g. 'AC', 'Access Control', 'PR'). Withdrawn items are left out unless include_withdrawn is true. Returns the total and up to \`limit\` hits with snippets and citations; use lookup_control for the full text.`,
+        inputSchema: z.object({
+          query: z.string().trim().max(100).optional().describe("Text to find, e.g. 'multi-factor', 'audit log', 'supply chain'"),
+          framework: z.string().trim().max(32).optional().describe("Only this framework: 'nist80053' or 'csf2'"),
+          family: z.string().trim().max(100).optional().describe("Only this 800-53 family or CSF function, e.g. 'IA' or 'PR'"),
+          include_withdrawn: z.boolean().default(false).describe("Also return withdrawn controls"),
+          limit: z.number().int().min(1).max(100).default(20).describe("Most hits to return"),
+        }),
+        annotations: READ_ONLY,
+      },
+      async ({ query, framework, family, include_withdrawn, limit }) =>
+        run(() =>
+          ok(
+            json(
+              datasets.searchControls(query || undefined, {
+                framework: framework || undefined,
+                family: family || undefined,
+                includeWithdrawn: include_withdrawn,
+                limit,
+              }),
+            ),
+          ),
+        ),
+    );
+  }
+
+  if (datasets && controlMap) {
+    server.registerTool(
+      "map_control",
+      {
+        title: "Map CSF 2.0 and SP 800-53",
+        description: [
+          `Map 1-${CONTROLS_MAX_BATCH} IDs across frameworks using NIST's CSF 2.0 informative references to SP 800-53 Rev 5.`,
+          "A CSF subcategory (PR.AA-01) returns its 800-53 controls; a category or function also includes its subcategories' (via).",
+          "An 800-53 control (AC-2, AC-2(1)) returns the CSF outcomes that cite it, its base control (via 'base control AC-2') or its whole family (via 'whole family AC').",
+          "These are supporting references, not equivalences. Each result has a citation like cyberdrive:csf2map@v1#PR.AA-01.",
+        ].join(" "),
+        inputSchema: z.object({
+          ids: z.array(z.string().max(64)).min(1).max(CONTROLS_MAX_BATCH).describe("IDs, e.g. ['PR.AA-01'] or ['AC-2']"),
+        }),
+        annotations: READ_ONLY,
+      },
+      async ({ ids }) => run(() => ok(json(datasets.mapControls(ids)))),
     );
   }
 

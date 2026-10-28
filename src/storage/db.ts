@@ -106,6 +106,41 @@ CREATE TABLE IF NOT EXISTS winevent_messages (
   min_os TEXT,
   PRIMARY KEY (event_id, version)
 );
+CREATE TABLE IF NOT EXISTS controls (
+  framework TEXT NOT NULL,
+  id TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  parent TEXT,
+  family TEXT,
+  family_title TEXT,
+  title TEXT NOT NULL,
+  statement TEXT,
+  guidance TEXT,
+  examples TEXT NOT NULL DEFAULT '[]',
+  related TEXT NOT NULL DEFAULT '[]',
+  withdrawn INTEGER NOT NULL DEFAULT 0,
+  withdrawn_to TEXT NOT NULL DEFAULT '[]',
+  extra TEXT NOT NULL DEFAULT '{}',
+  position INTEGER NOT NULL,
+  PRIMARY KEY (framework, id)
+);
+CREATE INDEX IF NOT EXISTS controls_parent ON controls (framework, parent);
+CREATE TABLE IF NOT EXISTS control_catalogs (
+  framework TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  version TEXT,
+  oscal_version TEXT,
+  last_modified TEXT
+);
+CREATE TABLE IF NOT EXISTS control_mappings (
+  source_framework TEXT NOT NULL,
+  source_id TEXT NOT NULL,
+  target_framework TEXT NOT NULL,
+  target_id TEXT NOT NULL,
+  reference TEXT NOT NULL,
+  PRIMARY KEY (source_framework, source_id, target_framework, target_id)
+);
+CREATE INDEX IF NOT EXISTS control_mappings_target ON control_mappings (target_framework, target_id);
 `;
 
 export function openDatabase(file: string): DatabaseSync {

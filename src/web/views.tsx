@@ -218,6 +218,9 @@ const NAV = [
   { href: "/shares", label: "Share links", icon: Icon.link, id: "shares" },
   { href: "/datasets/oui", label: "OUI database", icon: Icon.shield, id: "dataset-oui" },
   { href: "/datasets/winevent", label: "Windows events", icon: Icon.shield, id: "dataset-winevent" },
+  { href: "/datasets/nist80053", label: "NIST SP 800-53", icon: Icon.shield, id: "dataset-nist80053" },
+  { href: "/datasets/csf2", label: "NIST CSF 2.0", icon: Icon.shield, id: "dataset-csf2" },
+  { href: "/datasets/csf2map", label: "CSF ↔ 800-53 map", icon: Icon.shield, id: "dataset-csf2map" },
   { href: "/activity", label: "Activity", icon: Icon.activity, id: "activity" },
   { href: "/settings", label: "Settings", icon: Icon.settings, id: "settings" },
 ] as const;
@@ -1145,6 +1148,7 @@ export const DatasetPage: FC<{
       sub={`CyberDrive dataset cyberdrive:${kind.name}. Agents query it with read-only tools when their key is granted it.`}
     />
     <div class="stack">
+      {kind.about ? <p class="muted small">{kind.about}</p> : null}
       <section class="card" aria-labelledby="ds-current">
         <h2 id="ds-current">Current version</h2>
         {current ? (
