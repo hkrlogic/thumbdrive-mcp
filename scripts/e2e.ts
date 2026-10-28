@@ -202,6 +202,7 @@ type State = {
   revokedKey: string;
   cyberKey?: string;
   grcKey?: string;
+  tablesKey?: string;
   share: string;
   files: Record<string, string>;
 };
@@ -361,8 +362,8 @@ async function full(b: Browser) {
   const { client, call } = await mcp(scopedKey);
   const { tools } = await client.listTools();
   check(
-    tools.map((t) => t.name).sort().join(",") === "history,list,read,search" && tools.every((t) => t.annotations?.readOnlyHint),
-    "exactly four read-only tools",
+    tools.map((t) => t.name).sort().join(",") === "describe_table,history,list,list_tables,lookup_row,query_table,read,search" && tools.every((t) => t.annotations?.readOnlyHint),
+    "exactly eight read-only tools (drive + tables)",
   );
   const ls = await call("list", { path: "/" });
   const names = JSON.stringify(ls.meta);
@@ -443,6 +444,9 @@ async function full(b: Browser) {
   section("CyberDrive Windows events and NIST control frameworks");
   const grcKey = await moreDatasets(b, cyberKey);
 
+  section("CyberDrive tables (grid, draft, publish, rollback, import, agent tools)");
+  const tablesKey = await tablesFlow(b);
+
   section("share links");
   await b.page("/shares");
   let sh = await b.submit("/shares", { folder: "/team", hours: "1", label: "for Sam" });
@@ -496,7 +500,7 @@ async function full(b: Browser) {
   const lo = await b.submit("/logout", {});
   check((await b.req("/")).status === 303 && lo.html.includes("Signed out"), "logout");
 
-  const state: State = { key, scopedKey, revokedKey, cyberKey, grcKey, share, files: { "/team/blob.bin": sha(f.bin), "/team/sales.csv": sha(f.csv) } };
+  const state: State = { key, scopedKey, revokedKey, cyberKey, grcKey, tablesKey, share, files: { "/team/blob.bin": sha(f.bin), "/team/sales.csv": sha(f.csv) } };
   writeFileSync(stateFile, JSON.stringify(state));
 }
 
@@ -618,6 +622,141 @@ async function moreDatasets(b: Browser, ouiOnlyKey: string): Promise<string> {
   return grcKey;
 }
 
+type Lookup = { version: number; results: Array<{ input: string; result: string; row?: { row: number; citation: string; values: Record<string, unknown> } }> };
+async function tableLookups(key: string) {
+  const { client, call } = await mcp(key);
+  const tools = (await client.listTools()).tools.map((t) => t.name);
+  const listed = (await call("list_tables", {})).meta as { tables: Array<{ table: string; version: number }> } | undefined;
+  const servers = (await call("lookup_row", { table: "/inventory/servers", values: ["WEB01.example.com", "web02.example.com", "nope.example.com"] })).meta as Lookup | undefined;
+  const vlans = (await call("lookup_row", { table: "/inventory/vlans", values: ["10.1.2.3"] })).meta as Lookup | undefined;
+  const q = (await call("query_table", { table: "/inventory/servers", filters: [{ column: "Environment", op: "eq", value: "production" }] })).meta as
+    | { total: number; rows: Array<{ citation: string }> }
+    | undefined;
+  const inj = (await call("query_table", { table: "/inventory/servers", filters: [{ column: "OS", op: "eq", value: "x' OR 1=1 --" }] })).meta as { total: number; result?: string } | undefined;
+  await client.close();
+  return { tools, listed: listed?.tables ?? [], servers, vlans, q, inj };
+}
+
+/** POST JSON to the grid endpoints the way tables.js does (x-csrf-token header). */
+async function gridPost(b: Browser, path: string, body: unknown, csrf = b.csrf) {
+  const headers: Record<string, string> = { "content-type": "application/json", accept: "application/json" };
+  if (csrf) headers["x-csrf-token"] = csrf;
+  const res = await b.req(path, { method: "POST", body: JSON.stringify(body), headers });
+  return { status: res.status, json: (await res.json().catch(() => ({}))) as { added?: Array<{ id: number; errors: Record<string, string> }>; summary?: { issues: number } } };
+}
+
+async function tablesFlow(b: Browser): Promise<string> {
+  await b.page("/files");
+  await b.submit("/files/mkdir", { dir: "/", name: "inventory" });
+  await b.page("/tables");
+  const made = await b.post("/tables", { folder: "/inventory", template: "server-inventory", name: "servers", title: "Servers" });
+  const url = made.headers.get("location") ?? "";
+  const id = url.match(/^\/tables\/(\d+)$/)?.[1];
+  check(made.status === 303 && id, "create a table from the Server inventory template");
+  const grid = await b.page(url);
+  check(
+    grid.res.status === 200 && grid.html.includes("/assets/vendor/tabulator-6.7.1.min.js") && !/<script(?![^>]*\bsrc=)[^>]*>/.test(grid.html),
+    "grid page loads vendored Tabulator, no inline scripts",
+  );
+  check(!/unsafe-inline|https?:/.test(grid.res.headers.get("content-security-policy") ?? ""), "grid page keeps the strict CSP");
+  const js = await b.req("/assets/vendor/tabulator-6.7.1.min.js");
+  check(js.status === 200 && /javascript/.test(js.headers.get("content-type") ?? "") && (await js.text()).length > 100_000, "Tabulator asset served by the app");
+  const edits = `${url}/edits`;
+  check((await gridPost(b, edits, { adds: [{ values: { c1: "x" } }] }, "")).status === 403, "grid edit without the CSRF header -> 403");
+  const add = await gridPost(b, edits, {
+    adds: [
+      { values: { c1: "web01.example.com", c2: "10.0.0.10", c3: "production", c6: "ops@example.com" } },
+      { values: { c1: "web02.example.com", c2: "10.0.0.300", c3: "production" } },
+      { values: { c1: "db01.example.com", c2: "10.0.1.5", c3: "staging" } },
+    ],
+  });
+  const rows = add.json.added ?? [];
+  check(add.status === 200 && rows.length === 3 && rows[1].errors.c2 && add.json.summary?.issues === 1, "edit cells; an invalid IP is flagged");
+  const pub = await b.page(`${url}/publish`);
+  check(/1 problem must be fixed/.test(pub.html) && /disabled/.test(pub.html), "publish page shows the diff and blocks the invalid IP");
+  const blocked = await b.submit(`${url}/publish`, { note: "try" });
+  check(!/Published v1/.test(blocked.html), "publishing with invalid cells is refused");
+  await gridPost(b, edits, { updates: [{ row: rows[1].id, values: { c2: "10.0.0.11" } }] });
+  await b.page(`${url}/publish`);
+  const v1 = await b.submit(`${url}/publish`, { note: "initial servers" });
+  check(/Published v1: \+3/.test(v1.html), "publish v1 with a note");
+
+  await b.page("/keys");
+  const k = await b.submit("/keys", { name: "e2e-tables", folders: ["/inventory"] });
+  const tablesKey = k.html.match(/td_[A-Za-z0-9_-]{43}/)?.[0] ?? "";
+  check(tablesKey !== "", "create a key scoped to /inventory");
+
+  // A draft change is invisible to agents until published.
+  await b.page(url);
+  await gridPost(b, edits, { deletes: [rows[1].id] });
+  let r = await tableLookups(tablesKey);
+  check(["list_tables", "describe_table", "lookup_row", "query_table"].every((t) => r.tools.includes(t)), "the folder key sees the table tools");
+  const [web01, web02, nope] = r.servers?.results ?? [];
+  check(web01?.result === "match" && web01.row?.citation === `cyberdrive:/inventory/servers@v1#r${rows[0].id}`, "lookup_row is case-insensitive and cites @v1#r");
+  check(web02?.result === "match", "a draft delete is invisible to agents");
+  check(nope?.result === "No match", "an unknown hostname is an explicit No match");
+  check(r.q?.total === 2 && r.inj?.total === 0, "query_table filters; SQL in a value is just a value");
+  await b.page(`${url}/publish`);
+  const v2 = await b.submit(`${url}/publish`, { note: "retire web02" });
+  check(/Published v2: \+0 ~0 −1/.test(v2.html), "publish v2 removes web02");
+  r = await tableLookups(tablesKey);
+  check(r.servers?.results[1]?.result === "No match" && r.servers.version === 2, "agents see v2 immediately");
+  const roll = await b.submit(`${url}/rollback`, { version: "1" });
+  check(/Rolled back: v3 has v1/.test(roll.html), "one-click rollback to v1 creates v3");
+  r = await tableLookups(tablesKey);
+  check(r.servers?.results[1]?.result === "match" && /@v3#r/.test(r.servers.results[1].row?.citation ?? ""), "after rollback web02 is back at @v3");
+
+  // Import an IP plan from an xlsx built in memory.
+  const book = xlsx({
+    VLANs: [
+      ["CIDR", "VLAN", "Name", "Site"],
+      ["10.0.0.0/8", 1, "corp", "HQ"],
+      ["10.1.0.0/16", 110, "servers", "HQ"],
+      ["10.2.0.0/33", 120, "bad", "DR"],
+    ],
+  });
+  await b.page("/tables");
+  const fd = new FormData();
+  fd.set("_csrf", b.csrf);
+  fd.set("target", "new");
+  fd.append("file", new Blob([book as Uint8Array<ArrayBuffer>]), "vlans.xlsx");
+  const prev = await b.req("/tables/import", { method: "POST", body: fd });
+  const prevHtml = await prev.text();
+  const stage = prevHtml.match(/action="\/tables\/import\/([A-Za-z0-9_-]+)"/)?.[1];
+  check(prev.status === 200 && stage && /<option value="cidr" selected/.test(prevHtml) && /<option value="number" selected/.test(prevHtml), "xlsx import preview suggests CIDR and number types");
+  const imp = await b.submit(`/tables/import/${stage}`, {
+    _csrf: prevHtml.match(/name="_csrf" value="([^"]+)"/)?.[1] ?? b.csrf,
+    action: "import",
+    sheet: "0",
+    folder: "/inventory",
+    name: "vlans",
+    map_0: "new",
+    type_0: "cidr",
+    map_1: "new",
+    type_1: "number",
+    map_2: "new",
+    type_2: "text",
+    map_3: "new",
+    type_3: "text",
+    key: "0",
+  });
+  check(/Imported into the draft: 3 added/.test(imp.html) && /1 row\(s\) have invalid cells/.test(imp.html), "import lands as a draft and reports the invalid row");
+  const vtable = `/tables/${imp.html.match(/\/tables\/(\d+)\/(?:publish|edits)/)?.[1]}`;
+  const draft = (await (await b.req(`${vtable}/draft.json`)).json()) as { rows: Array<{ id: number; data: Record<string, unknown> }> };
+  const bad = draft.rows.find((x) => x.data.c1 === "10.2.0.0/33");
+  await b.page(vtable);
+  await gridPost(b, `${vtable}/edits`, { deletes: [bad?.id] });
+  await b.page(`${vtable}/publish`);
+  const pv = await b.submit(`${vtable}/publish`, { note: "imported" });
+  check(/Published v1: \+2/.test(pv.html), "fix and publish the imported table");
+  r = await tableLookups(tablesKey);
+  check(r.vlans?.results[0]?.row?.values.CIDR === "10.1.0.0/16", "lookup_row on a CIDR table returns the longest containing prefix");
+  check(r.listed.some((t) => t.table === "/inventory/vlans") && r.listed.some((t) => t.table === "/inventory/servers" && t.version === 3), "list_tables shows both published tables");
+  const act = await b.page("/activity?key=e2e-tables");
+  check(["list_tables", "lookup_row", "query_table"].every((t) => act.html.includes(t)), "table tool calls show in activity");
+  return tablesKey;
+}
+
 async function afterRestart() {
   await common();
   const st = JSON.parse(readFileSync(stateFile, "utf8")) as State;
@@ -640,6 +779,11 @@ async function afterRestart() {
     check(out?.results[0]?.match?.manufacturer === "Cisco", "OUI database and the dataset grant survived");
   }
   if (st.grcKey) checkGrc(await grcLookups(st.grcKey), "after restart");
+  if (st.tablesKey) {
+    const r = await tableLookups(st.tablesKey);
+    check(r.servers?.version === 3 && r.servers.results[0]?.result === "match", "published tables and versions survived");
+    check(r.vlans?.results[0]?.row?.values.CIDR === "10.1.0.0/16", "imported table survived");
+  }
   await b.page("/shares");
   const id = (await b.page("/shares")).html.match(/action="\/shares\/(\d+)\/revoke"/)?.[1];
   await b.submit(`/shares/${id}/revoke`, {});
