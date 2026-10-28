@@ -155,4 +155,33 @@ export class DatasetReader {
       `${ids.length} ID(s)`,
     );
   }
+
+  /**
+   * Unlogged context for table lookups (the table tool logs the call): MAC
+   * vendors when the key has oui, control titles when it has a control
+   * catalog. Empty when the key lacks the dataset or it is not imported.
+   */
+  enrich(type: "mac" | "control", values: string[]): Map<string, { dataset: string; label: string; citation: string }> {
+    const out = new Map<string, { dataset: string; label: string; citation: string }>();
+    const unique = [...new Set(values)].slice(0, 50);
+    if (unique.length === 0) return out;
+    try {
+      if (type === "mac" && this.has("oui")) {
+        for (const r of this.oui.lookup(unique).results) {
+          if (r.match) out.set(r.input, { dataset: "oui", label: r.match.manufacturer, citation: r.match.citation });
+          else if (r.result === "locally administered") out.set(r.input, { dataset: "oui", label: "locally administered (random/private MAC)", citation: "" });
+        }
+      }
+      if (type === "control" && this.controlFrameworks().length) {
+        for (const r of this.controls.lookup(unique).results) {
+          if (r.result === "match" && r.title && r.citation) {
+            out.set(r.input, { dataset: r.framework ?? "", label: r.withdrawn ? `${r.title} (withdrawn)` : r.title, citation: r.citation });
+          }
+        }
+      }
+    } catch {
+      // Dataset granted but not imported yet: no enrichment.
+    }
+    return out;
+  }
 }

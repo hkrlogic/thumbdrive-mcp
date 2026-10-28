@@ -84,10 +84,19 @@ test("/mcp refuses foreign Host headers and plain HTTP behind a proxy", async ()
   assert.equal((await req({ host: "localhost", origin: "https://evil.example" })).status, 403);
 });
 
-test("tools are the four read-only tools", async () => {
+test("a folder key gets the read-only drive and table tools", async () => {
   const client = await connect(sharedKey);
   const { tools } = await client.listTools();
-  assert.deepEqual(tools.map((t) => t.name).sort(), ["history", "list", "read", "search"]);
+  assert.deepEqual(tools.map((t) => t.name).sort(), [
+    "describe_table",
+    "history",
+    "list",
+    "list_tables",
+    "lookup_row",
+    "query_table",
+    "read",
+    "search",
+  ]);
   for (const t of tools) {
     assert.equal(t.annotations?.readOnlyHint, true, t.name);
     assert.equal(t.annotations?.destructiveHint, false, t.name);
@@ -160,11 +169,14 @@ test("stdio transport serves the same tools with THUMBDRIVE_KEY", async () => {
     stderr: "ignore",
   });
   await client.connect(transport);
-  const { tools } = await client.listTools();
-  assert.equal(tools.length, 4);
+  try {
+    const { tools } = await client.listTools();
+    assert.equal(tools.length, 8);
   const [, content] = texts(await client.callTool({ name: "read", arguments: { path: "/shared/hello.txt" } }));
   assert.equal(content, "hello again\n");
-  const denied = await client.callTool({ name: "list", arguments: { path: "/private" } });
-  assert.equal(denied.isError, true);
-  await client.close();
+    const denied = await client.callTool({ name: "list", arguments: { path: "/private" } });
+    assert.equal(denied.isError, true);
+  } finally {
+    await client.close();
+  }
 });

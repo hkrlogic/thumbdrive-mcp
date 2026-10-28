@@ -2,7 +2,8 @@
  * The MCP surface: four read-only file tools, plus CyberDrive lookup tools
  * (lookup_mac, search_oui_vendor, lookup_windows_event, search_windows_events,
  * lookup_control, search_controls, map_control) for keys granted the
- * matching dataset.
+ * matching dataset, and table tools (list_tables, describe_table, lookup_row,
+ * query_table) over published tables inside the key's folders.
  * Agents can never change the drive; every tool is annotated readOnlyHint
  * and the server has no write path.
  */
@@ -16,6 +17,8 @@ import { OUI_MAX_BATCH } from "../cyberdrive/oui.ts";
 import { WINEVENT_MAX_BATCH } from "../cyberdrive/winevent.ts";
 import { InvalidPathError } from "../storage/paths.ts";
 import { DriveError, NotFoundError } from "../storage/drive.ts";
+import { LOOKUP_MAX_BATCH, QUERY_MAX_LIMIT, QUERY_OPS, type TableReader } from "../tables/agent.ts";
+import { TableError } from "../tables/store.ts";
 import { APP_NAME, APP_VERSION } from "../version.ts";
 
 const READ_ONLY = {
@@ -39,7 +42,8 @@ function fail(error: unknown): ToolResult {
     error instanceof InvalidPathError ||
     error instanceof UsageError ||
     error instanceof DriveError ||
-    error instanceof DatasetError;
+    error instanceof DatasetError ||
+    error instanceof TableError;
   const message = known && error instanceof Error ? error.message : "Internal error";
   if (!known) console.error("[thumbdrive] tool error:", error);
   return { content: [{ type: "text", text: message }], isError: true };
@@ -55,7 +59,8 @@ function run(fn: () => ToolResult): ToolResult {
 
 const json = (value: unknown) => JSON.stringify(value, null, 2);
 
-export function createMcpServer(reader: Reader, datasets?: DatasetReader): McpServer {
+export function createMcpServer(reader: Reader, datasets?: DatasetReader, tables?: TableReader): McpServer {
+  const hasTables = !!tables && reader.scope.folders.length > 0;
   const oui = datasets?.has("oui") ?? false;
   const winevent = datasets?.has("winevent") ?? false;
   const controls = datasets?.controlFrameworks() ?? [];
@@ -89,6 +94,12 @@ export function createMcpServer(reader: Reader, datasets?: DatasetReader): McpSe
           : []),
         ...(controlMap
           ? ["CyberDrive: map_control gives NIST's CSF 2.0 to SP 800-53 informative references; these are supporting references, not equivalences."]
+          : []),
+        ...(hasTables
+          ? [
+              "Tables: list_tables shows the published tables you can see (inventories, IP plans...). Use lookup_row for a key value (hostname, IP, CIDR, MAC...) and query_table for filters.",
+              "Quote the row citation (cyberdrive:/path@vN#rID). If a result says 'No match', say the table has no such row instead of guessing.",
+            ]
           : []),
       ].join(" "),
     },
@@ -313,6 +324,85 @@ export function createMcpServer(reader: Reader, datasets?: DatasetReader): McpSe
         annotations: READ_ONLY,
       },
       async ({ ids }) => run(() => ok(json(datasets.mapControls(ids)))),
+    );
+  }
+
+  if (tables && hasTables) {
+    const tableRef = z.string().trim().min(1).max(1100).describe("Table path, e.g. '/inventory/servers' (a citation like cyberdrive:/inventory/servers@v3 also works)");
+    server.registerTool(
+      "list_tables",
+      {
+        title: "List tables",
+        description:
+          "List the published tables you can see (optionally under a folder): path, title, description, latest version, row count, key column, columns and a citation. Drafts are never shown.",
+        inputSchema: z.object({ path: z.string().max(1024).default("/").describe("Folder to list tables under (default: everything you can see)") }),
+        annotations: READ_ONLY,
+      },
+      async ({ path }) => run(() => ok(json(tables.listTables(path)))),
+    );
+
+    server.registerTool(
+      "describe_table",
+      {
+        title: "Describe table",
+        description:
+          "Columns (name, type, select options, which is the key), row count, latest version number, publish time and note of one table. Column types: text, longtext, number, date, checkbox, select, url, email, hostname, ip, cidr, mac, cve, control.",
+        inputSchema: z.object({ table: tableRef }),
+        annotations: READ_ONLY,
+      },
+      async ({ table }) => run(() => ok(json(tables.describeTable(table)))),
+    );
+
+    server.registerTool(
+      "lookup_row",
+      {
+        title: "Look up rows by key",
+        description: [
+          `Look up 1-${LOOKUP_MAX_BATCH} values in a table's key column (latest published version).`,
+          "Normalized by type: hostnames case-insensitive (a unique short name also matches its FQDN), MACs in any format, IPs canonical (IPv6 compressed), CVE and control IDs case-insensitive.",
+          "In a table keyed by CIDR, an IP (or a smaller range) returns the containing range with the longest prefix.",
+          "Each result has result ('match', 'No match', 'ambiguous' or 'invalid'), matched_by, and the row with its values and a citation like cyberdrive:/inventory/servers@v3#r12.",
+          "MAC and control-ID cells get vendor / title context when you also hold the oui or NIST datasets.",
+        ].join(" "),
+        inputSchema: z.object({
+          table: tableRef,
+          values: z.array(z.string().max(300)).min(1).max(LOOKUP_MAX_BATCH).describe("Key values, e.g. ['web01.example.com'] or ['10.20.30.40']"),
+        }),
+        annotations: READ_ONLY,
+      },
+      async ({ table, values }) => run(() => ok(json(tables.lookupRow(table, values)))),
+    );
+
+    server.registerTool(
+      "query_table",
+      {
+        title: "Query table",
+        description: [
+          "Filter a table's latest published version. Filters are ANDed; each is {column, op, value}.",
+          `Operators: ${QUERY_OPS.join(", ")}. eq/neq/in are case-insensitive and normalize values by column type; contains/starts_with need text-like columns;`,
+          "gt/lt need number or date (YYYY-MM-DD) columns; is_empty takes no value (value false means 'is not empty'); in takes a list.",
+          `Returns total, rows (values plus citation), and next_offset for the next page (limit up to ${QUERY_MAX_LIMIT}). 'No match' when nothing matches.`,
+        ].join(" "),
+        inputSchema: z.object({
+          table: tableRef,
+          filters: z
+            .array(
+              z.object({
+                column: z.string().max(100).describe("Column name"),
+                op: z.enum(QUERY_OPS),
+                value: z.union([z.string().max(300), z.number(), z.boolean(), z.array(z.union([z.string().max(300), z.number()])).max(100)]).optional(),
+              }),
+            )
+            .max(20)
+            .default([]),
+          columns: z.array(z.string().max(100)).max(100).optional().describe("Only return these columns"),
+          sort: z.object({ column: z.string().max(100), direction: z.enum(["asc", "desc"]).default("asc") }).optional(),
+          limit: z.number().int().min(1).max(QUERY_MAX_LIMIT).default(50),
+          offset: z.number().int().min(0).default(0),
+        }),
+        annotations: READ_ONLY,
+      },
+      async ({ table, ...opts }) => run(() => ok(json(tables.queryTable(table, opts)))),
     );
   }
 
