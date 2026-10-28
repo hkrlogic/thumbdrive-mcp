@@ -217,6 +217,7 @@ const NAV = [
   { href: "/keys", label: "Agent keys", icon: Icon.key, id: "keys" },
   { href: "/shares", label: "Share links", icon: Icon.link, id: "shares" },
   { href: "/datasets/oui", label: "OUI database", icon: Icon.shield, id: "dataset-oui" },
+  { href: "/datasets/winevent", label: "Windows events", icon: Icon.shield, id: "dataset-winevent" },
   { href: "/activity", label: "Activity", icon: Icon.activity, id: "activity" },
   { href: "/settings", label: "Settings", icon: Icon.settings, id: "settings" },
 ] as const;
@@ -879,6 +880,8 @@ const FolderChecks: FC<{ folders: string[]; checked: string[]; idPrefix: string;
   </fieldset>
 );
 
+const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+
 export interface DatasetChoice {
   name: string;
   title: string;
@@ -1148,7 +1151,7 @@ export const DatasetPage: FC<{
           <dl class="kv">
             <dt>Version</dt>
             <dd>v{current.version}</dd>
-            <dt>Rows</dt>
+            <dt>{cap(kind.unit)}</dt>
             <dd>
               {current.rows.toLocaleString("en-US")}
               {current.skipped ? <span class="muted"> ({current.skipped.toLocaleString("en-US")} skipped)</span> : null}
@@ -1225,7 +1228,7 @@ export const DatasetPage: FC<{
               <thead>
                 <tr>
                   <th scope="col">Version</th>
-                  <th scope="col">Rows</th>
+                  <th scope="col">{cap(kind.unit)}</th>
                   <th scope="col">Imported</th>
                   <th scope="col" class="hide-sm">
                     Source

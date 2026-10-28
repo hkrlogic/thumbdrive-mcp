@@ -11,7 +11,7 @@
  *   npm run admin -- ls [drive-path]
  *   npm run admin -- history <drive-path>
  *   npm run admin -- restore <drive-path> <version>
- *   npm run admin -- key create <name> [--folder <drive-folder> ...] [--dataset oui ...]
+ *   npm run admin -- key create <name> [--folder <drive-folder> ...] [--dataset oui|winevent ...]
  *   npm run admin -- key datasets <name> [dataset ...]
  *   npm run admin -- key list
  *   npm run admin -- key revoke <name>
@@ -20,6 +20,9 @@
  *   npm run admin -- cyberdrive oui status
  *   npm run admin -- cyberdrive oui lookup <mac> [mac ...]
  *   npm run admin -- cyberdrive oui search <vendor>
+ *   npm run admin -- cyberdrive winevent import [path-or-url] | status
+ *   npm run admin -- cyberdrive winevent lookup <event-id> [event-id ...]
+ *   npm run admin -- cyberdrive winevent search <text> [--category <category>]
  *   npm run admin -- set-password          (prompts; or pipe the password on stdin)
  */
 import { readFileSync, readdirSync, statSync } from "node:fs";
@@ -30,6 +33,7 @@ import { loadConfig } from "./config.ts";
 import { DATASET_NAMES, isDatasetName } from "./cyberdrive/datasets.ts";
 import { createDatasetStore } from "./cyberdrive/index.ts";
 import { OuiLookup } from "./cyberdrive/oui.ts";
+import { WinEventLookup } from "./cyberdrive/winevent.ts";
 import { moveEntry } from "./ops.ts";
 import { Drive } from "./storage/drive.ts";
 import { joinDrivePath, normalizeDrivePath } from "./storage/paths.ts";
@@ -53,6 +57,8 @@ const USAGE = [
   `cyberdrive <${DATASET_NAMES.join("|")}> status`,
   "cyberdrive oui lookup <mac> [mac ...]",
   "cyberdrive oui search <vendor>",
+  "cyberdrive winevent lookup <event-id> [event-id ...]",
+  "cyberdrive winevent search [text] [--category <category>]",
   "set-password",
 ]
   .map((line) => `  admin ${line}`)
@@ -223,18 +229,26 @@ async function main(argv: string[]): Promise<void> {
         if (sub === "import") {
           const row = await datasets.importFrom(name, args[0], "admin");
           console.log(
-            `Imported ${name} v${row.version}: ${row.rows} rows${row.skipped ? ` (${row.skipped} skipped)` : ""} from ${row.source}\nsha256 ${row.sha256}`,
+            `Imported ${name} v${row.version}: ${row.rows} ${datasets.kind(name).unit}${row.skipped ? ` (${row.skipped} skipped)` : ""} from ${row.source}\nsha256 ${row.sha256}`,
           );
         } else if (sub === "status") {
           const history = datasets.history(name, 10);
           if (history.length === 0) console.log(`${name}: not imported yet`);
-          for (const h of history) console.log(`v${h.version}\t${h.imported_at}\t${h.rows} rows\t${h.actor}\t${h.source}\t${h.sha256}`);
+          for (const h of history) console.log(`v${h.version}\t${h.imported_at}\t${h.rows} ${datasets.kind(name).unit}\t${h.actor}\t${h.source}\t${h.sha256}`);
         } else if (sub === "lookup" && name === "oui") {
           if (args.length === 0) usage("cyberdrive oui lookup needs <mac>");
           console.log(JSON.stringify(new OuiLookup(datasets).lookup(args), null, 2));
         } else if (sub === "search" && name === "oui") {
           if (!args[0]) usage("cyberdrive oui search needs <vendor>");
           console.log(JSON.stringify(new OuiLookup(datasets).searchVendor(args.join(" ")), null, 2));
+        } else if (sub === "lookup" && name === "winevent") {
+          if (args.length === 0) usage("cyberdrive winevent lookup needs <event-id>");
+          console.log(JSON.stringify(new WinEventLookup(datasets).lookup(args), null, 2));
+        } else if (sub === "search" && name === "winevent") {
+          const at = args.indexOf("--category");
+          const category = at >= 0 ? args[at + 1] : undefined;
+          const words = at >= 0 ? [...args.slice(0, at), ...args.slice(at + 2)] : args;
+          console.log(JSON.stringify(new WinEventLookup(datasets).search(words.join(" ") || undefined, { category }), null, 2));
         } else usage(`Unknown cyberdrive command ${sub ?? ""}`);
         break;
       }
