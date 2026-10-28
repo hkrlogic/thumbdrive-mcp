@@ -18,6 +18,7 @@ import { hashPassword, verifyPasswordHash } from "../src/web/auth.ts";
 import { ShareStore } from "../src/web/shares.ts";
 import { connectionSnippets } from "../src/web/snippets.ts";
 import { keysFor, tempDrive, testConfig, text } from "./helpers.ts";
+import { xlsx } from "./xlsx.ts";
 
 const PASSWORD = "correct horse battery";
 
@@ -676,6 +677,36 @@ test("OUI database page: upload imports a new version, bad files are rejected, C
   const forged = await b.post("/datasets/oui/import", {}, { csrf: "forged", files: [["file", ouiFixture([["00:00:0C", "X"]]), "a.db"]] });
   assert.equal(forged.status, 403);
   assert.equal((await b.fetch("/datasets/nope")).status, 404);
+});
+
+test("Windows events page imports the Microsoft workbook and counts events", async () => {
+  const { app, datasets, keys } = setup();
+  const b = await signedIn(app);
+  const empty = await b.page("/datasets/winevent");
+  assert.equal(empty.status, 200);
+  assert.match(empty.html, /Not imported yet/);
+  assert.match(empty.html, /Refresh from source/);
+  assert.match(empty.html, /href="\/datasets\/winevent"/);
+  const book = xlsx({
+    "Security Audit Events": [
+      ["Category", "Subcategory", "Event ID", "Message Summary", "Minimum Operating System Requirement"],
+      ["Logon/Logoff", "Logon", 4624, "An account was successfully logged on.", "Windows Vista"],
+    ],
+    "Complete Event Messages": [
+      ["Event ID", "Version", "Detailed Message", "Minimum Operating System Requirement"],
+      [4624, 0, "An account was successfully logged on.", "Windows Vista"],
+    ],
+  });
+  const up = await b.post("/datasets/winevent/import", {}, { from: "/datasets/winevent", files: [["file", new Blob([new Uint8Array(book)]), "WindowsSecurityAuditEvents.xlsx"]] });
+  assert.equal(up.status, 303);
+  assert.match(await flashOf(b, up.headers.get("location")), /Imported version 1: 1 events/);
+  assert.equal(datasets.current("winevent")?.rows, 1);
+  const bad = await b.post("/datasets/winevent/import", {}, { from: "/datasets/winevent", files: [["file", new Blob([text("nope")]), "x.xlsx"]] });
+  assert.match(await flashOf(b, bad.headers.get("location")), /xlsx/i);
+  const page = await b.page("/keys");
+  assert.match(page.html, /name="datasets" value="winevent"/);
+  await b.post("/keys", { name: "win-agent", datasets: "winevent" }, { from: "/keys" });
+  assert.deepEqual(keys.list().find((k) => k.name === "win-agent")?.datasets, ["winevent"]);
 });
 
 test("dataset uploads have their own size limit", async () => {
