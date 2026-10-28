@@ -29,6 +29,10 @@ export interface Config {
    * is accepted like ALLOWED_HOSTS. Empty: derived from each request.
    */
   publicUrl: string;
+  /** Largest CyberDrive dataset file (upload or download), from DATASET_MAX_MB (default 100). */
+  datasetMaxBytes: number;
+  /** CYBERDRIVE_AUTO_REFRESH=1: re-download imported datasets from their source when older than 30 days. Off by default. */
+  datasetAutoRefresh: boolean;
 }
 
 function publicUrlFromEnv(raw: string | undefined): string {
@@ -70,5 +74,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     rateLimitPerMinute: intFromEnv(env, "RATE_LIMIT_PER_MINUTE", 120),
     allowInsecureHttp: env.ALLOW_INSECURE_HTTP === "1",
     publicUrl: publicUrlFromEnv(env.THUMBDRIVE_PUBLIC_URL),
+    datasetMaxBytes: intFromEnv(env, "DATASET_MAX_MB", 100) * 1024 * 1024,
+    datasetAutoRefresh: env.CYBERDRIVE_AUTO_REFRESH === "1",
   };
 }

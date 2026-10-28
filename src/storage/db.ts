@@ -58,6 +58,38 @@ CREATE TABLE IF NOT EXISTS share_links (
   last_used_at TEXT,
   downloads INTEGER NOT NULL DEFAULT 0
 );
+-- CyberDrive datasets (src/cyberdrive): one row per import; the highest version is current.
+CREATE TABLE IF NOT EXISTS dataset_imports (
+  id INTEGER PRIMARY KEY,
+  dataset TEXT NOT NULL,
+  version INTEGER NOT NULL,
+  rows INTEGER NOT NULL,
+  skipped INTEGER NOT NULL DEFAULT 0,
+  source TEXT NOT NULL,
+  sha256 TEXT NOT NULL,
+  actor TEXT NOT NULL,
+  imported_at TEXT NOT NULL,
+  UNIQUE (dataset, version)
+);
+CREATE TABLE IF NOT EXISTS key_datasets (
+  key_id INTEGER NOT NULL REFERENCES keys (id) ON DELETE CASCADE,
+  dataset TEXT NOT NULL,
+  PRIMARY KEY (key_id, dataset)
+);
+CREATE TABLE IF NOT EXISTS oui_entries (
+  prefix TEXT PRIMARY KEY,
+  nibbles INTEGER NOT NULL,
+  oui TEXT NOT NULL,
+  manufacturer TEXT NOT NULL,
+  registry TEXT,
+  short_name TEXT,
+  device_type TEXT,
+  registered_date TEXT,
+  address TEXT,
+  sources TEXT,
+  status TEXT,
+  deregistered_date TEXT
+);
 `;
 
 export function openDatabase(file: string): DatabaseSync {
