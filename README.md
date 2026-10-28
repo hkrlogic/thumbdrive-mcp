@@ -88,6 +88,7 @@ The UI is served at `/` on the same port as `/mcp`. See the [Web UI guide](docs/
 | Agent keys | Create a key for one or more folders. The key is shown once, with a copy button and snippets for Cursor, Claude Desktop (via `mcp-remote`), Claude Code and other clients that use the address you opened the UI on. Change a key's folders or revoke it |
 | Share links | Give a person read-only browser access to one folder: 1 hour, 1 day (default), 7 days or 30 days. Links are random 256-bit tokens stored as hashes. Revoke any time |
 | OUI database | CyberDrive: import or refresh the MAC vendor (OUI) database, see its version, rows, source and SHA-256, and which keys can query it. See [docs/cyberdrive.md](docs/cyberdrive.md) |
+| Windows events | CyberDrive: the same for Microsoft's Windows security audit events catalog |
 | Activity | Every agent read (key, tool, path, time), filterable by key, action and path; optionally your own changes and share-link downloads |
 | Settings | Change the admin password (signs out every other session) |
 
@@ -141,14 +142,16 @@ Text views for Excel, PDF and Word files are not built yet: `format: "text"` say
 
 ## CyberDrive
 
-CyberDrive adds read-only security reference datasets that agents query with cited answers. The first is the MAC address vendor (OUI) database:
+CyberDrive adds read-only security reference datasets that agents query with cited answers: the MAC address vendor (OUI) database and Microsoft's Windows security audit events catalog.
 
 | Tool | What it does |
 | --- | --- |
 | `lookup_mac(macs)` | Up to 50 MACs or prefixes in any common format (`00:1A:2B:3C:4D:5E`, `00-1a-2b-...`, `001a.2b3c.4d5e`, `001A2B`). Longest-prefix match (MA-S 9, MA-M 7, then MA-L 6 nibbles); flags locally administered and multicast addresses; says `No match` explicitly. Each match has a citation such as `cyberdrive:oui@v3#00:00:0C` |
 | `search_oui_vendor(query, limit)` | Find prefixes by vendor name |
+| `lookup_windows_event(ids)` | Up to 50 Windows Security log event IDs: category > subcategory, summary, minimum OS and every version's detailed message, with a citation such as `cyberdrive:winevent@v1#4624`; explicit `No match` |
+| `search_windows_events(query, category, limit)` | Text search over summaries and messages, optionally within one audit category |
 
-The dataset is not bundled (it includes GPLv2 Wireshark and Nmap data). Import it from **OUI database** in the web UI (upload, or **Refresh from source**) or with `npm run admin -- cyberdrive oui import`. Keys get these tools only when you grant the dataset; a whole-drive key does not get it automatically. Every lookup is logged. Details, the access model, output format and license note: [docs/cyberdrive.md](docs/cyberdrive.md).
+The datasets are not bundled (the OUI data includes GPLv2 Wireshark and Nmap data; the Windows catalog is Microsoft's download). Import them from **OUI database** and **Windows events** in the web UI (upload, or **Refresh from source**) or with `npm run admin -- cyberdrive oui import` and `cyberdrive winevent import`. The Windows catalog is Microsoft's 2016 list: it does not cover newer Windows 10/11 events or Sysmon. Keys get each dataset's tools only when you grant that dataset; a whole-drive key does not get it automatically. Every lookup is logged. Details, the access model, output format and license note: [docs/cyberdrive.md](docs/cyberdrive.md).
 
 ## Admin CLI
 
@@ -160,10 +163,12 @@ npm run admin -- import <local-folder> <drive-folder>
 npm run admin -- mkdir | rm | ls | history <drive-path>
 npm run admin -- mv <drive-path> <new-drive-path>
 npm run admin -- restore <drive-path> <version>
-npm run admin -- key create <name> [--folder <folder> ...] [--dataset oui]
-npm run admin -- key datasets <name> [oui]
+npm run admin -- key create <name> [--folder <folder> ...] [--dataset oui|winevent ...]
+npm run admin -- key datasets <name> [oui] [winevent]
 npm run admin -- cyberdrive oui import [path-or-url] | status
 npm run admin -- cyberdrive oui lookup <mac> ... | search <vendor>
+npm run admin -- cyberdrive winevent import [path-or-url] | status
+npm run admin -- cyberdrive winevent lookup <id> ... | search [text] [--category <category>]
 npm run admin -- key list | key revoke <name>
 npm run admin -- activity [count]
 npm run admin -- set-password         # prompts, or reads the first line of stdin

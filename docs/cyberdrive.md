@@ -2,11 +2,12 @@
 
 CyberDrive is the security side of Thumbdrive: reference datasets that agents can query through read-only MCP tools, next to the files in the drive. Each answer carries a citation, so an agent can show where a fact came from instead of guessing.
 
-The first dataset is the **MAC address vendor (OUI) database**.
+There are two datasets: the **MAC address vendor (OUI) database** and the **Windows security audit events catalog**.
 
 | Dataset | Tools | Citation |
 | --- | --- | --- |
 | `oui`: IEEE MA-L, MA-M and MA-S assignments, merged with Wireshark and Nmap names | `lookup_mac`, `search_oui_vendor` | `cyberdrive:oui@v3#00:00:0C` |
+| `winevent`: Microsoft's Windows Security Audit Events catalog (2016): category, subcategory, summary, minimum OS and every version of the detailed message | `lookup_windows_event`, `search_windows_events` | `cyberdrive:winevent@v1#4624` |
 
 Datasets are **not** shipped with Thumbdrive. You import them (see [License](#license)).
 
@@ -59,17 +60,19 @@ Set `CYBERDRIVE_AUTO_REFRESH=1`. The server then checks every 6 hours and downlo
 
 Dataset access is a separate, explicit grant on an agent key, alongside its folders:
 
-- On **Agent keys**, tick **OUI database** (`cyberdrive:oui`) when you create a key, or change it later with **Save access**.
-- In the CLI, add `--dataset oui` to `key create`, or use `key datasets <name> oui` (`key datasets <name>` with no dataset removes the grant, unless the key has no folders).
+- On **Agent keys**, tick **OUI database** (`cyberdrive:oui`) and/or **Windows security events** (`cyberdrive:winevent`) when you create a key, or change it later with **Save access**.
+- In the CLI, add `--dataset oui` or `--dataset winevent` (repeatable) to `key create`, or use `key datasets <name> oui winevent` (`key datasets <name>` with no dataset removes the grants, unless the key has no folders).
+
+Each dataset is granted separately: a key with only `oui` does not see the Windows event tools, and the other way round.
 
 Rules:
 
 - A whole-drive key (`/`) does **not** get datasets automatically. Grant them on purpose.
 - A key can be dataset-only, with no folders. It then sees only the dataset tools.
-- A key without the grant does not see `lookup_mac` or `search_oui_vendor` in its tool list.
-- Every lookup and search is written to **Activity** with the key name, action (`lookup_mac` or `search_oui_vendor`), path `cyberdrive:oui` and the result for each input, such as `v3 2 MAC(s): 00:00:0C:12:34:56=00:00:0C, 02:00:00:00:00:01=locally administered`.
+- A key without the grant does not see that dataset's tools in its tool list.
+- Every lookup and search is written to **Activity** with the key name, the tool name, the path (`cyberdrive:oui` or `cyberdrive:winevent`) and the result for each input, such as `v3 2 MAC(s): 00:00:0C:12:34:56=00:00:0C, 02:00:00:00:00:01=locally administered` or `v1 2 event(s): 4624=Logon, 9999=No match`.
 
-## Tools
+## OUI tools
 
 Both tools are annotated `readOnlyHint: true`.
 
@@ -140,9 +143,110 @@ If the database has not been imported, the tool answers with an error asking the
 
 Case-insensitive search on manufacturer and short name. `query` is 2 to 100 characters; `limit` is 1 to 100 (default 25). Each hit has the prefix, registry, names, status and a citation.
 
+## Windows security events
+
+### Source and coverage
+
+The catalog is Microsoft's **Windows Security Audit Events** spreadsheet (`WindowsSecurityAuditEvents.xlsx`, about 70 KB):
+
+```
+https://download.microsoft.com/download/8/e/1/8e11ad26-98a1-4ee3-9f7f-1db4eb18badf/WindowsSecurityAuditEvents.xlsx
+```
+
+It has two sheets: **Security Audit Events** (category, subcategory, event ID, message summary, minimum OS) and **Complete Event Messages** (event ID, version, detailed message, minimum OS). The current file gives 410 event IDs in 9 audit categories, with 443 message versions.
+
+> **Coverage.** Microsoft published this catalog in **2016** and has not updated it. It does not cover newer events, such as some added in later Windows 10 and Windows 11 releases, and it covers only the Windows **Security** log: not Sysmon, PowerShell, System or Application events. A few common Security-log IDs are not in it either, such as 1102 ("The audit log was cleared"). For those, the tools answer `No match` instead of guessing.
+
+### Import
+
+- **Web UI.** Open **Windows events** in the sidebar (`/datasets/winevent`). Select **Refresh from source** to download the file above, or upload a copy under **Import a file**.
+- **CLI.**
+
+  ```sh
+  npm run admin -- cyberdrive winevent import                  # download from Microsoft
+  npm run admin -- cyberdrive winevent import ./WindowsSecurityAuditEvents.xlsx
+  npm run admin -- cyberdrive winevent status
+  npm run admin -- cyberdrive winevent lookup 4624 4688
+  npm run admin -- cyberdrive winevent search "special logon" --category "Logon/Logoff"
+  ```
+
+`CYBERDRIVE_AUTO_REFRESH=1` also covers this dataset when it has been imported.
+
+An import works the same way as for OUI: it validates the file, replaces the data in one transaction and adds a history row. Validation checks that:
+
+- the file is an `.xlsx` workbook
+- both sheets are present (sheet names and column headers are matched without regard to case or spacing)
+- the columns above are present
+- event IDs are whole numbers from 1 to 65535
+
+Rows without a usable ID, summary or message are skipped and counted. Line endings are normalized, and the indentation Microsoft added to every message line is removed. The version's count is the number of distinct event IDs, shown as **events**.
+
+The workbook is read with [`read-excel-file`](https://www.npmjs.com/package/read-excel-file), not the unmaintained `xlsx` 0.18 package from npm, which has known vulnerabilities.
+
+### `lookup_windows_event(ids)`
+
+`ids` is a list of 1 to 50 event IDs, as numbers or strings (`4624`, `"4624"`, `"EventID 4624"`). Each result has a `result` field set to one of these values:
+
+| `result` | Meaning |
+| --- | --- |
+| `match` | `event_id`, `category`, `subcategory`, `summary`, `min_os`, `versions` (each with `version`, `min_os` and the full `message` template; `%1`, `%2`... are the event's insertion strings) and a `citation` |
+| `No match` | The ID is not in this catalog. The note repeats the coverage limits above |
+| `invalid` | Not an event ID |
+
+Special cases:
+
+- **Events under several subcategories.** Four events appear under more than one subcategory (4659, 4660, 4661 and 4663 are under both Object Access > SAM and Object Access > Kernel). The first listing is returned as `category` and `subcategory`, and the others are in `also_listed_under`.
+- **Message-only events.** Three IDs, 4741, 4763 and 8191, appear only in the messages sheet. They have `category: null` and a note explaining this.
+
+The citation is `cyberdrive:winevent@v<version>#<event id>`, such as `cyberdrive:winevent@v1#4624`.
+
+Example with `[4624, 9999]` (messages trimmed):
+
+```json
+{
+  "dataset": "winevent",
+  "version": 1,
+  "results": [
+    {
+      "input": "4624",
+      "event_id": 4624,
+      "result": "match",
+      "category": "Logon/Logoff",
+      "subcategory": "Logon",
+      "summary": "An account was successfully logged on.",
+      "min_os": "Windows Vista, Windows Server 2008",
+      "versions": [
+        { "version": 0, "min_os": "Windows Vista, Windows Server 2008", "message": "An account was successfully logged on.\n\nSubject:\n    Security ID:        %1\n..." },
+        { "version": 1, "min_os": "Windows 8, Windows Server 2012", "message": "..." },
+        { "version": 2, "min_os": "Windows 10", "message": "...\nLogon Information:\n    Logon Type:        %9\n    Restricted Admin Mode:    %22\n    Virtual Account:        %25\n    Elevated Token:        %27\n..." }
+      ],
+      "citation": "cyberdrive:winevent@v1#4624"
+    },
+    {
+      "input": "9999",
+      "event_id": 9999,
+      "result": "No match",
+      "note": "No match: event 9999 is not in this catalog. The catalog is Microsoft's 2016 list of Windows security audit events; it does not cover newer events (some Windows 10/11 additions) or other logs such as Sysmon. ..."
+    }
+  ],
+  "note": "The catalog is Microsoft's 2016 list of Windows security audit events; ..."
+}
+```
+
+### `search_windows_events(query, category, limit)`
+
+This tool runs a case-insensitive text search over summaries, subcategories and detailed messages. A number that is a whole event ID matches that ID.
+
+- `query` is optional, up to 100 characters. When given, it must be at least 2 characters.
+- `category` is optional and limits the search to one audit category. It matches the category name exactly, ignoring case. The categories are Account Logon, Account Management, DS Access, Detailed Tracking, Logon/Logoff, Object Access, Policy Change, Privilege Use and System. An unknown category returns an error that lists the valid names.
+- Give at least one of `query` and `category`.
+- `limit` is 1 to 100 (default 20).
+
+The tool returns `total` (all matches) and up to `limit` results. Each result has the ID, category, subcategory, summary, minimum OS, number of versions and citation. Use `lookup_windows_event` to get the full messages.
+
 ## Use it from an agent
 
-Create a key with the OUI grant, then use the snippet shown on the **Agent keys** page. For Cursor (`~/.cursor/mcp.json`):
+Create a key with the dataset grants you want, then use the snippet shown on the **Agent keys** page. For Cursor (`~/.cursor/mcp.json`):
 
 ```json
 {
@@ -161,8 +265,10 @@ For Claude Code:
 claude mcp add --transport http thumbdrive https://drive.example.com/mcp --header "Authorization: Bearer td_..."
 ```
 
-Then ask, for example: "Which vendors are behind these MACs from the DHCP log: 00:00:0c:12:34:56, 8c1f.64af.a000, 02:00:00:00:00:01? Cite each one." The server's instructions tell the agent to quote the citation and to say "No match" or "locally administered" instead of guessing.
+Then ask, for example: "Which vendors are behind these MACs from the DHCP log: 00:00:0c:12:34:56, 8c1f.64af.a000, 02:00:00:00:00:01? Cite each one." Or: "What do event IDs 4624, 4672 and 4688 mean, and which audit subcategory must be on to get them?" The server's instructions tell the agent to quote the citation and to say "No match" or "locally administered" instead of guessing.
 
 ## License
 
 Thumbdrive's code is under the Apache License 2.0. The OUI database is a separate work: the Ringmast4r OUI-Master-Database project is MIT-licensed, but it merges data from Wireshark's `manuf` file and Nmap's `nmap-mac-prefixes`, which are distributed under the GPLv2 (plus IEEE registry data). For that reason the dataset is **not committed to this repository or included in the image**. Each user downloads it into their own drive, and should check the source project's terms before redistributing it.
+
+The Windows security events catalog is published by Microsoft on the Microsoft Download Center under Microsoft's terms. It is also **not committed or bundled**. Each user downloads it from Microsoft, through **Refresh from source** or the CLI. The test suite uses small synthetic workbooks that it builds in memory.

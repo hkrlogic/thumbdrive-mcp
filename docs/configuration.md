@@ -117,8 +117,8 @@ Drive paths start with `/`, such as `/team/handbook.pdf`.
 
 | Command | What it does |
 | --- | --- |
-| `key create <name> [--folder <drive-folder> ...] [--dataset oui]` | Create a read-only key for one or more folders (use `--folder /` for the whole drive) and/or CyberDrive datasets. A key needs at least one of them. The key is printed **once**; only its hash is stored. |
-| `key datasets <name> [dataset ...]` | Set the CyberDrive datasets a key can query (`oui`). With no dataset, removes them (a key with no folders must keep one). |
+| `key create <name> [--folder <drive-folder> ...] [--dataset oui\|winevent ...]` | Create a read-only key for one or more folders (use `--folder /` for the whole drive) and/or CyberDrive datasets. A key needs at least one of them. The key is printed **once**; only its hash is stored. |
+| `key datasets <name> [dataset ...]` | Set the CyberDrive datasets a key can query (`oui`, `winevent`). With no dataset, removes them (a key with no folders must keep one). |
 | `key list` | List keys: name, prefix, folders, and last use or revocation time. |
 | `key revoke <name>` | Turn a key off at once. |
 
@@ -132,6 +132,10 @@ To change a key's folders or datasets without changing the key, use **Edit** on 
 | `cyberdrive oui status` | Every import: version, time (UTC), rows, who, source and SHA-256. |
 | `cyberdrive oui lookup <mac> [mac ...]` | The `lookup_mac` result as JSON (not logged as an agent read). |
 | `cyberdrive oui search <vendor>` | The `search_oui_vendor` result as JSON. |
+| `cyberdrive winevent import [path-or-url]` | Validate and import Microsoft's `WindowsSecurityAuditEvents.xlsx` as the next version. With no argument, downloads it from Microsoft. Prints the version, event count and SHA-256. |
+| `cyberdrive winevent status` | Every import of the Windows events catalog. |
+| `cyberdrive winevent lookup <id> [id ...]` | The `lookup_windows_event` result as JSON. |
+| `cyberdrive winevent search [text] [--category <category>]` | The `search_windows_events` result as JSON. |
 
 See [cyberdrive.md](cyberdrive.md) for the dataset format, access model and license note.
 
