@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Review {{ table.path }}{% endblock %}
+{% block head %}<link rel="stylesheet" href="/static/tables.css">{% endblock %}
+{% block main %}
+<h1>Review {{ table.path }}</h1>
+<p><a href="/tables/{{ table.id }}">Back to the grid</a> · Changes since {% if latest %}v{{ latest.version }}{% else %}nothing published{% endif %}</p>
+<p class="diff-counts">
+  <span class="badge ok">+{{ diff.added | length }} added</span>
+  <span class="badge accent">~{{ diff.changed | length }} changed</span>
+  <span class="badge danger">−{{ diff.removed | length }} removed</span>
+  {% if diff.columns %}<span class="badge">{{ diff.columns | length }} column change(s)</span>{% endif %}
+</p>
+{% if problems %}
+<div class="issues"><strong>{{ problems | length }} problem(s) block publishing</strong>
+  <ul>{% for p in problems[:50] %}<li>{{ p }}</li>{% endfor %}{% if problems | length > 50 %}<li>…and {{ problems | length - 50 }} more</li>{% endif %}</ul>
+</div>
+{% endif %}
+<div class="card">
+  {% if diff.columns %}<h2>Columns</h2><ul class="diff-list">{% for c in diff.columns %}<li class="changed">{{ c }}</li>{% endfor %}</ul>{% endif %}
+  {% if added %}<h2>Added rows</h2><ul class="diff-list">{% for r in added[:200] %}<li class="added">+ {{ r }}</li>{% endfor %}</ul>{% endif %}
+  {% if changed %}<h2>Changed rows</h2><ul class="diff-list">{% for r, names in changed[:200] %}<li class="changed">~ {{ r }}: {{ names | join(", ") }}</li>{% endfor %}</ul>{% endif %}
+  {% if removed %}<h2>Removed rows</h2><ul class="diff-list">{% for r in removed[:200] %}<li class="removed">− {{ r }}</li>{% endfor %}</ul>{% endif %}
+  {% if not (diff.columns or added or changed or removed) %}<p class="hint">The draft is the same as the published version.</p>{% endif %}
+</div>
+<form method="post" action="/tables/{{ table.id }}/publish" class="card">
+  <input type="hidden" name="_csrf" value="{{ csrf }}">
+  <label>Note for this version <input name="note" maxlength="500" required placeholder="What changed and why"></label>
+  <button class="primary" {% if problems %}disabled{% endif %}>Publish v{{ (latest.version if latest else 0) + 1 }}</button>
+</form>
+{% endblock %}

@@ -57,7 +57,16 @@ def test_tools_are_read_only(server: Server) -> None:
             return await client.list_tools()
 
     tools = anyio.run(run).tools
-    assert sorted(t.name for t in tools) == ["history", "list", "read", "search"]
+    assert sorted(t.name for t in tools) == [
+        "describe_table",
+        "history",
+        "list",
+        "list_tables",
+        "lookup_row",
+        "query_table",
+        "read",
+        "search",
+    ]
     assert all(t.annotations and t.annotations.read_only_hint for t in tools)
 
 

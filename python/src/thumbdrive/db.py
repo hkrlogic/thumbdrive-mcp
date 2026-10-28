@@ -6,6 +6,8 @@ SQLite's own ``PRAGMA user_version``. Never edit a released migration: add a new
 """
 
 import sqlite3
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -49,3 +51,15 @@ def _statements(sql: str) -> list[str]:
     """Split a migration file into statements (our migrations have no ';' inside strings)."""
     lines = [line.split("--", 1)[0] for line in sql.splitlines()]
     return [s.strip() for s in "\n".join(lines).split(";") if s.strip()]
+
+
+@contextmanager
+def transaction(db: sqlite3.Connection) -> Iterator[None]:
+    """BEGIN IMMEDIATE ... COMMIT, or ROLLBACK on any error."""
+    db.execute("BEGIN IMMEDIATE")
+    try:
+        yield
+    except BaseException:
+        db.execute("ROLLBACK")
+        raise
+    db.execute("COMMIT")

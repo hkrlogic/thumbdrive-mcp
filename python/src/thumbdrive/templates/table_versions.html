@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Versions of {{ table.path }}{% endblock %}
+{% block main %}
+<h1>Versions of {{ table.path }}</h1>
+<p><a href="/tables/{{ table.id }}">Back to the grid</a></p>
+<table>
+  <thead><tr><th>Version</th><th>Note</th><th>Rows</th><th>Changes</th><th>Published (UTC)</th><th></th></tr></thead>
+  <tbody>
+  {% for v in versions %}
+  <tr>
+    <td><a href="/tables/{{ table.id }}/versions/{{ v.version }}">v{{ v.version }}</a>{% if loop.first %} <strong>(agents see this)</strong>{% endif %}</td>
+    <td>{{ v.note }}</td><td>{{ v.row_count }}</td><td>+{{ v.added }} ~{{ v.changed }} −{{ v.removed }}</td>
+    <td>{{ v.published_at[:16].replace("T", " ") }}</td>
+    <td>{% if not loop.first %}
+      <form method="post" action="/tables/{{ table.id }}/rollback" class="inline" data-confirm="Publish v{{ v.version }} again as a new version? The draft is replaced.">
+        <input type="hidden" name="_csrf" value="{{ csrf }}"><input type="hidden" name="version" value="{{ v.version }}"><button>Roll back to v{{ v.version }}</button>
+      </form>{% endif %}</td>
+  </tr>
+  {% else %}
+  <tr><td colspan="6" class="hint">Nothing published yet.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

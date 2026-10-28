@@ -1,4 +1,4 @@
-"""The four read-only MCP tools: list, read, search, history.
+"""The read-only MCP tools: list, read, search, history (files) plus the table tools in table_tools.py.
 
 Every call runs with one key's Scope. Anything outside it answers "Not found",
 exactly like a missing file. Every call is written to the activity log.
@@ -15,9 +15,10 @@ from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import TextContent, ToolAnnotations
 from pydantic import Field
 
-from . import paths
-from .drive import Drive, DriveError, NotFound, is_text, sha256_hex
+from . import paths, table_tools
+from .drive import Drive, NotFound, is_text, sha256_hex
 from .keys import Key
+from .tables import Tables
 
 READ_ONLY = ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False)
 SCOPE_KEY = "thumbdrive.key"  # where app.py puts the authenticated Key in the ASGI scope
@@ -26,7 +27,9 @@ INSTRUCTIONS = (
     "Thumbdrive is a read-only shared drive. Folders you cannot see do not exist for you. "
     "Start with list (path '/'), then read files. Large text files come back in pages: "
     "keep calling read with page+1 while has_more is true. Each read returns metadata JSON "
-    "(including the file's sha256) followed by the content. You cannot change files."
+    "(including the file's sha256) followed by the content. You cannot change files. "
+    "Tables (typed rows such as server inventories or IP plans): list_tables, describe_table, then "
+    "lookup_row or query_table. Cite rows with the citation each result carries."
 )
 
 PathArg = Annotated[str, Field(max_length=1024, description="Drive path, e.g. '/' or '/team/notes.md'")]
@@ -62,7 +65,7 @@ def _page_bounds(data: bytes, page: int, size: int) -> tuple[int, int]:
     return boundary((page - 1) * size), boundary(min(page * size, len(data)))
 
 
-def build(drive: Drive, page_bytes: int) -> MCPServer:
+def build(drive: Drive, tables: Tables, page_bytes: int) -> MCPServer:
     server = MCPServer("thumbdrive", version="0.1.0", instructions=INSTRUCTIONS)
 
     @server.tool(name="list", title="List folder", annotations=READ_ONLY, structured_output=False)
@@ -151,7 +154,5 @@ def build(drive: Drive, page_bytes: int) -> MCPServer:
         drive.log(key.name, "history", p)
         return _text({"path": p, "versions": versions})
 
+    table_tools.register(server, drive, tables, _key, _text, READ_ONLY)
     return server
-
-
-__all__ = ["build", "SCOPE_KEY", "DriveError"]

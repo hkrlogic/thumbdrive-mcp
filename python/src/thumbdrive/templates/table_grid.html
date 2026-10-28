@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block title %}{{ table.path }}{% endblock %}
+{% block head %}{% include "_tables_head.html" %}{% endblock %}
+{% block main_class %} class="wide"{% endblock %}
+{% block main %}
+<h1>{{ table.path }} <span class="badge">draft</span></h1>
+<p class="hint">{% if latest %}Agents see v{{ latest.version }} ({{ latest.row_count }} rows). Edits below go to the draft until you publish.{% else %}Not published yet: agents cannot see this table.{% endif %}</p>
+<div class="actions">
+  <a href="/tables/{{ table.id }}/review"><strong>Review and publish</strong></a>
+  <a href="/tables/{{ table.id }}/versions">Versions</a>
+  <a href="/tables">All tables</a>
+  {% if latest %}
+  <form method="post" action="/tables/{{ table.id }}/discard" class="inline" data-confirm="Throw away all draft changes?">
+    <input type="hidden" name="_csrf" value="{{ csrf }}"><button>Discard draft</button>
+  </form>
+  {% endif %}
+</div>
+<div class="card">
+  <div class="grid-toolbar">
+    <button type="button" data-grid-add disabled>Add row</button>
+    <button type="button" data-grid-delete disabled class="danger">Delete selected rows</button>
+    <button type="button" data-grid-clear-filters>Clear filters and sort</button>
+    <span class="diff-counts" data-diff-counts></span>
+    <span data-grid-status role="status">Loading…</span>
+  </div>
+  <div id="grid" class="grid-host" data-table="{{ table.id }}" data-src="/tables/{{ table.id }}/draft.json"
+       data-edits="/tables/{{ table.id }}/edits" data-paste="/tables/{{ table.id }}/paste"></div>
+  <noscript><p class="error">The grid needs JavaScript. Import a CSV instead.</p></noscript>
+  <p class="grid-help">Double-click, <kbd>Enter</kbd> or <kbd>F2</kbd> edits a cell; arrow keys move; <kbd>Delete</kbd> clears the selection.
+  Paste rows from Excel with <kbd>Ctrl</kbd>+<kbd>V</kbd>: into the selected cells, or (nothing selected) appended, with a header row matched by column name and rows matching the key updated.
+  Red cells are invalid: hover for the reason. They are kept in the draft but block publishing.</p>
+</div>
+<details class="card" {% if not table.columns %}open{% endif %}>
+  <summary><strong>Columns</strong> ({{ table.columns | length }} of at most {{ max_columns }})</summary>
+  <table class="columns-form">
+    <thead><tr><th>Name</th><th>Type</th><th>Key</th><th></th></tr></thead>
+    <tbody>
+    {% for c in table.columns %}
+    <tr>
+      <td>
+        <form method="post" action="/tables/{{ table.id }}/columns/rename" class="inline">
+          <input type="hidden" name="_csrf" value="{{ csrf }}"><input type="hidden" name="column" value="{{ c.id }}">
+          <input name="name" value="{{ c.name }}" aria-label="Column name" required> <button>Rename</button>
+        </form>
+      </td>
+      <td>{{ types[c.type] }}{% if c.type == "select" %}<br><span class="hint">{{ c.options | join(", ") }}</span>{% endif %}</td>
+      <td>{% if table.key_column == c.id %}★ key{% elif c.type in key_types %}
+        <form method="post" action="/tables/{{ table.id }}/columns/key" class="inline">
+          <input type="hidden" name="_csrf" value="{{ csrf }}"><input type="hidden" name="column" value="{{ c.id }}"><button>Make key</button>
+        </form>{% endif %}</td>
+      <td>
+        <form method="post" action="/tables/{{ table.id }}/columns/delete" class="inline" data-confirm="Delete column {{ c.name }} and its values from the draft?">
+          <input type="hidden" name="_csrf" value="{{ csrf }}"><input type="hidden" name="column" value="{{ c.id }}"><button class="danger">Delete</button>
+        </form>
+      </td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <form method="post" action="/tables/{{ table.id }}/columns/add">
+    <h3>Add column</h3>
+    <input type="hidden" name="_csrf" value="{{ csrf }}">
+    <label>Name <input name="name" required></label>
+    <label>Type <select name="type" data-type-select>{% for id, label in types.items() %}<option value="{{ id }}">{{ label }}</option>{% endfor %}</select></label>
+    <label data-options-field>Choices (one per line or comma-separated) <textarea name="options" rows="3"></textarea></label>
+    <button>Add column</button>
+  </form>
+  {% if table.key_column %}
+  <form method="post" action="/tables/{{ table.id }}/columns/key">
+    <input type="hidden" name="_csrf" value="{{ csrf }}"><input type="hidden" name="column" value=""><button>Remove key</button>
+  </form>
+  {% endif %}
+</details>
+<form method="post" action="/tables/{{ table.id }}/delete" data-confirm="Delete {{ table.path }} with all its versions? Agents lose it immediately.">
+  <input type="hidden" name="_csrf" value="{{ csrf }}"><button class="danger">Delete table</button>
+</form>
+{% endblock %}

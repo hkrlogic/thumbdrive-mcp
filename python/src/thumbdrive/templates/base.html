@@ -4,8 +4,10 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}Thumbdrive{% endblock %} · Thumbdrive</title>
+  <meta name="csrf" content="{{ csrf }}">
   <link rel="stylesheet" href="/static/app.css">
   <script src="/static/app.js" defer></script>
+  {% block head %}{% endblock %}
 </head>
 <body>
 <header>
@@ -13,6 +15,7 @@
   {% if signed_in %}
   <nav>
     <a href="/files">Files</a>
+    <a href="/tables">Tables</a>
     <a href="/keys">Agent keys</a>
     <a href="/activity">Activity</a>
     <form method="post" action="/logout" class="inline">
@@ -22,7 +25,7 @@
   </nav>
   {% endif %}
 </header>
-<main>
+<main{% block main_class %}{% endblock %}>
   {% if error %}<p class="error">{{ error }}</p>{% endif %}
   {% if notice %}<p class="notice">{{ notice }}</p>{% endif %}
   {% block main %}{% endblock %}

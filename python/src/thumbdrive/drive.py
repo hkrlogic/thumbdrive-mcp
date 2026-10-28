@@ -220,6 +220,8 @@ class Drive:
         target = self.disk(path)
         if target is None or not target.exists():
             raise NotFound(path)
+        if self.db.execute("SELECT 1 FROM tables WHERE path LIKE ? ESCAPE '\\'", (_like_prefix(path),)).fetchone():
+            raise DriveError("This folder holds tables; delete or move them first")
         for file_path in self._files_under(path):
             row = self.latest(file_path)
             if row is None or row["action"] != "delete":
@@ -245,7 +247,8 @@ class Drive:
             raise DriveError(f"{new_path} has history from an earlier file; pick another name")
         source.rename(target)
         n = len(path)
-        for table, column in (("versions", "path"), ("file_text", "path"), ("key_folders", "folder")):
+        moved = (("versions", "path"), ("file_text", "path"), ("key_folders", "folder"), ("tables", "path"))
+        for table, column in moved:
             self.db.execute(
                 f"UPDATE {table} SET {column} = ? || substr({column}, ?)"
                 f" WHERE {column} = ? OR {column} LIKE ? ESCAPE '\\'",

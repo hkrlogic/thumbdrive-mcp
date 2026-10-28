@@ -20,6 +20,8 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from . import auth, db, keys, tools
 from .config import Config
 from .drive import Drive
+from .tables import Tables
+from .tables_web import TablesWeb
 from .web import Web
 
 CSP = (
@@ -119,7 +121,8 @@ def create_app(config: Config) -> Starlette:
     drive.sync()
     auth.apply_env_password(database, config.admin_password)
 
-    mcp_server = tools.build(drive, config.read_page_bytes)
+    tables = Tables(database)
+    mcp_server = tools.build(drive, tables, config.read_page_bytes)
     mcp_server.streamable_http_app(
         stateless_http=True,
         json_response=True,
@@ -135,7 +138,8 @@ def create_app(config: Config) -> Starlette:
             yield
 
     web = Web(drive, database, config)
-    routes = [Route("/mcp", McpEndpoint(database, sessions.handle_request)), *web.routes()]
+    tables_web = TablesWeb(web, tables)
+    routes = [Route("/mcp", McpEndpoint(database, sessions.handle_request)), *web.routes(), *tables_web.routes()]
     app = Starlette(routes=routes, lifespan=lifespan, middleware=[Middleware(Guard, config=config)])
-    app.state.drive, app.state.db = drive, database
+    app.state.drive, app.state.db, app.state.tables = drive, database, tables
     return app
