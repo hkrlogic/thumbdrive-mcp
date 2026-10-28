@@ -1,6 +1,7 @@
 /** Server-rendered pages for the admin UI and public share links (Hono JSX, no client framework). */
 import type { Child, FC, PropsWithChildren } from "hono/jsx";
 import type { KeyRecord } from "../auth/keys.ts";
+import type { DatasetImport, DatasetKind } from "../cyberdrive/datasets.ts";
 import type { ActivityRow, DriveStats, Entry, VersionRow } from "../storage/drive.ts";
 import { segmentsOf } from "../storage/paths.ts";
 import { APP_VERSION } from "../version.ts";
@@ -92,6 +93,12 @@ export const Icon = {
   activity: () => (
     <Svg>
       <path d="M3 12h4l3-8 4 16 3-8h4" />
+    </Svg>
+  ),
+  shield: () => (
+    <Svg>
+      <path d="M12 3 4.5 6v5.5c0 4.5 3.2 8.4 7.5 9.5 4.3-1.1 7.5-5 7.5-9.5V6z" />
+      <path d="m9 12 2 2 4-4" />
     </Svg>
   ),
   settings: () => (
@@ -209,6 +216,7 @@ const NAV = [
   { href: "/files", label: "Files", icon: Icon.folder, id: "files" },
   { href: "/keys", label: "Agent keys", icon: Icon.key, id: "keys" },
   { href: "/shares", label: "Share links", icon: Icon.link, id: "shares" },
+  { href: "/datasets/oui", label: "OUI database", icon: Icon.shield, id: "dataset-oui" },
   { href: "/activity", label: "Activity", icon: Icon.activity, id: "activity" },
   { href: "/settings", label: "Settings", icon: Icon.settings, id: "settings" },
 ] as const;
@@ -871,10 +879,36 @@ const FolderChecks: FC<{ folders: string[]; checked: string[]; idPrefix: string;
   </fieldset>
 );
 
+export interface DatasetChoice {
+  name: string;
+  title: string;
+}
+
+const DatasetChecks: FC<{ datasets: DatasetChoice[]; checked: string[]; idPrefix: string; legend: string }> = ({
+  datasets,
+  checked,
+  idPrefix,
+  legend,
+}) =>
+  datasets.length === 0 ? null : (
+    <fieldset class="checks">
+      <legend class="sr-only">{legend}</legend>
+      {datasets.map((d) => (
+        <label for={`${idPrefix}-ds-${d.name}`}>
+          <input id={`${idPrefix}-ds-${d.name}`} type="checkbox" name="datasets" value={d.name} checked={checked.includes(d.name)} />
+          <span>
+            {d.title} <span class="muted">cyberdrive:{d.name}</span>
+          </span>
+        </label>
+      ))}
+    </fieldset>
+  );
+
 export interface NewKey {
   name: string;
   token: string;
   folders: string[];
+  datasets: string[];
   snippets: Snippet[];
 }
 
@@ -886,6 +920,9 @@ const NewKeyCard: FC<{ created: NewKey }> = ({ created }) => (
         Copy it now. Only a hash is stored, so it cannot be shown again. It can read{" "}
         {created.folders.map((f) => (
           <span class="badge">{f}</span>
+        ))}
+        {created.datasets.map((d) => (
+          <span class="badge">cyberdrive:{d}</span>
         ))}{" "}
         and nothing else.
       </p>
@@ -928,9 +965,10 @@ export const KeysPage: FC<{
   ctx: PageCtx;
   keys: KeyRecord[];
   folders: string[];
+  datasets?: DatasetChoice[];
   created?: NewKey;
-  form?: { name: string; folders: string[] };
-}> = ({ ctx, keys, folders, created, form }) => {
+  form?: { name: string; folders: string[]; datasets?: string[] };
+}> = ({ ctx, keys, folders, datasets = [], created, form }) => {
   const active = keys.filter((k) => !k.revoked_at);
   const revoked = keys.filter((k) => k.revoked_at);
   return (
@@ -968,6 +1006,13 @@ export const KeysPage: FC<{
               <strong aria-hidden="true">Folders it can read</strong>
               <FolderChecks folders={folders} checked={form?.folders ?? []} idPrefix="nk" legend="Folders it can read" />
               <span class="hint">Pick one or more. Subfolders are included.</span>
+              {datasets.length ? (
+                <>
+                  <strong aria-hidden="true">CyberDrive datasets</strong>
+                  <DatasetChecks datasets={datasets} checked={form?.datasets ?? []} idPrefix="nk" legend="CyberDrive datasets" />
+                  <span class="hint">Unlocks lookup tools such as lookup_mac. Not included in “Whole drive”.</span>
+                </>
+              ) : null}
             </div>
           </form>
         </section>
@@ -1005,6 +1050,9 @@ export const KeysPage: FC<{
                           {k.folders.map((f) => (
                             <span class="badge">{f}</span>
                           ))}
+                          {k.datasets.map((d) => (
+                            <span class="badge">cyberdrive:{d}</span>
+                          ))}
                         </div>
                       </td>
                       <td class="hide-sm muted">
@@ -1021,8 +1069,14 @@ export const KeysPage: FC<{
                               <Csrf ctx={ctx} />
                               <strong aria-hidden="true">Folders for {k.name}</strong>
                               <FolderChecks folders={folders} checked={k.folders} idPrefix={`k${k.id}`} legend={`Folders for ${k.name}`} />
+                              <DatasetChecks
+                                datasets={datasets}
+                                checked={k.datasets}
+                                idPrefix={`k${k.id}`}
+                                legend={`Datasets for ${k.name}`}
+                              />
                               <button class="btn primary sm" type="submit">
-                                Save folders
+                                Save access
                               </button>
                             </form>
                             <hr />
@@ -1071,6 +1125,138 @@ export const KeysPage: FC<{
     </Layout>
   );
 };
+
+// ---------- CyberDrive datasets ----------
+
+export const DatasetPage: FC<{
+  ctx: PageCtx;
+  kind: DatasetKind;
+  current?: DatasetImport;
+  history: DatasetImport[];
+  keys: KeyRecord[];
+  maxMb: number;
+}> = ({ ctx, kind, current, history, keys, maxMb }) => (
+  <Layout ctx={ctx} title={kind.title} active={`dataset-${kind.name}`}>
+    <PageHead
+      title={kind.title}
+      sub={`CyberDrive dataset cyberdrive:${kind.name}. Agents query it with read-only tools when their key is granted it.`}
+    />
+    <div class="stack">
+      <section class="card" aria-labelledby="ds-current">
+        <h2 id="ds-current">Current version</h2>
+        {current ? (
+          <dl class="kv">
+            <dt>Version</dt>
+            <dd>v{current.version}</dd>
+            <dt>Rows</dt>
+            <dd>
+              {current.rows.toLocaleString("en-US")}
+              {current.skipped ? <span class="muted"> ({current.skipped.toLocaleString("en-US")} skipped)</span> : null}
+            </dd>
+            <dt>Imported</dt>
+            <dd>
+              <Time iso={current.imported_at} abs /> <span class="muted">by {current.actor}</span>
+            </dd>
+            <dt>Source</dt>
+            <dd class="mono small">{current.source}</dd>
+            <dt>SHA-256</dt>
+            <dd>
+              <CopyField id="ds-sha" value={current.sha256} label="Copy SHA-256" />
+            </dd>
+          </dl>
+        ) : (
+          <p class="empty">Not imported yet. Upload a file or refresh from the source below.</p>
+        )}
+      </section>
+      <section class="card stack" aria-labelledby="ds-import">
+        <h2 id="ds-import">Import</h2>
+        <form method="post" action={`/datasets/${kind.name}/import`} enctype="multipart/form-data" class="stack">
+          <Csrf ctx={ctx} />
+          <div class="field">
+            <label for="ds-file">Upload {kind.fileHint}</label>
+            <input id="ds-file" type="file" name="file" required />
+            <span class="hint">Up to {maxMb} MB (DATASET_MAX_MB). The new version replaces the old one in one step.</span>
+          </div>
+          <div>
+            <button class="btn primary" type="submit">
+              <Icon.upload /> Import file
+            </button>
+          </div>
+        </form>
+        <hr />
+        <form
+          method="post"
+          action={`/datasets/${kind.name}/refresh`}
+          class="plain"
+          data-confirm={`Download ${kind.defaultUrl} and import it as a new version?`}
+        >
+          <Csrf ctx={ctx} />
+          <p class="muted small">
+            Source: <span class="mono">{kind.defaultUrl}</span>
+          </p>
+          <button class="btn" type="submit">
+            <Icon.download /> Refresh from source
+          </button>
+        </form>
+      </section>
+      <section class="card" aria-labelledby="ds-keys">
+        <h2 id="ds-keys">Keys with access</h2>
+        {keys.length ? (
+          <div class="row">
+            {keys.map((k) => (
+              <span class="badge">{k.name}</span>
+            ))}
+          </div>
+        ) : (
+          <p class="muted">
+            No key can query this dataset yet. Grant it on <a href="/keys">Agent keys</a>.
+          </p>
+        )}
+      </section>
+      <section class="card flush" aria-labelledby="ds-history">
+        <div class="card-head">
+          <h2 id="ds-history">Import history</h2>
+        </div>
+        {history.length === 0 ? (
+          <p class="empty">No imports yet.</p>
+        ) : (
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th scope="col">Version</th>
+                  <th scope="col">Rows</th>
+                  <th scope="col">Imported</th>
+                  <th scope="col" class="hide-sm">
+                    Source
+                  </th>
+                  <th scope="col" class="hide-sm">
+                    SHA-256
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {history.map((h) => (
+                  <tr>
+                    <td>v{h.version}</td>
+                    <td>{h.rows.toLocaleString("en-US")}</td>
+                    <td class="muted">
+                      <Time iso={h.imported_at} />
+                    </td>
+                    <td class="hide-sm mono small">{h.source}</td>
+                    <td class="hide-sm mono small" title={h.sha256}>
+                      {h.sha256.slice(0, 12)}…
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+    </div>
+  </Layout>
+);
 
 // ---------- share links ----------
 

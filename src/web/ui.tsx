@@ -18,6 +18,7 @@ import type { JSX } from "hono/jsx/jsx-runtime";
 import { randomBytes } from "node:crypto";
 import type { KeyStore } from "../auth/keys.ts";
 import type { Config } from "../config.ts";
+import { DatasetError, type DatasetStore, isDatasetName } from "../cyberdrive/datasets.ts";
 import { moveEntry } from "../ops.ts";
 import { DriveError, type Drive, NotFoundError } from "../storage/drive.ts";
 import { InvalidPathError, isWithin, joinDrivePath, normalizeDrivePath, parentOf, segmentsOf } from "../storage/paths.ts";
@@ -28,6 +29,7 @@ import { connectionSnippets } from "./snippets.ts";
 import {
   ActivityPage,
   DashboardPage,
+  DatasetPage,
   type Flash,
   FilePage,
   FolderPage,
@@ -46,6 +48,7 @@ import {
 export interface UiDeps {
   drive: Drive;
   keys: KeyStore;
+  datasets: DatasetStore;
   config: Config;
   auth: AdminAuth;
   shares: ShareStore;
@@ -87,7 +90,14 @@ function files(form: Form, name: string): File[] {
 
 /** A message that is safe and useful to show the admin. Unknown errors are logged and summarised. */
 function userMessage(error: unknown): string {
-  if (error instanceof DriveError || error instanceof NotFoundError || error instanceof InvalidPathError) return error.message;
+  if (
+    error instanceof DriveError ||
+    error instanceof NotFoundError ||
+    error instanceof InvalidPathError ||
+    error instanceof DatasetError
+  ) {
+    return error.message;
+  }
   if (error instanceof Error && /UNIQUE constraint failed: keys\.name/.test(error.message)) {
     return "A key with that name already exists";
   }
@@ -117,7 +127,7 @@ function downloadResponse(name: string, bytes: Uint8Array, sha256: string): Resp
 }
 
 export function registerUi(app: Hono, deps: UiDeps): void {
-  const { drive, keys, config, auth, shares, loginLimiter } = deps;
+  const { drive, keys, datasets, config, auth, shares, loginLimiter } = deps;
 
   // ---------- plumbing ----------
 
@@ -219,9 +229,16 @@ export function registerUi(app: Hono, deps: UiDeps): void {
       : c.text("Request body too large", 413);
   const uploadLimit = bodyLimit({ maxSize: config.maxFileBytes + 1024 * 1024, onError: tooLarge });
   const formLimit = bodyLimit({ maxSize: 256 * 1024, onError: tooLarge });
+  // CyberDrive dataset files (e.g. the ~20 MB OUI SQLite) get their own, larger limit: DATASET_MAX_MB.
+  const datasetLimit = bodyLimit({
+    maxSize: config.datasetMaxBytes + 1024 * 1024,
+    onError: (c) => c.text(`Too large: the dataset limit is ${Math.round(config.datasetMaxBytes / 1048576)} MB (DATASET_MAX_MB)`, 413),
+  });
+  const isDatasetUpload = (p: string) => /^\/datasets\/[a-z]+\/import$/.test(p);
   app.use("*", async (c, next) => {
     if (c.req.method !== "POST" || c.req.path === "/mcp") return next();
-    return (c.req.path === "/files/upload" ? uploadLimit : formLimit)(c, next);
+    const p = c.req.path;
+    return (p === "/files/upload" ? uploadLimit : isDatasetUpload(p) ? datasetLimit : formLimit)(c, next);
   });
 
   // CSRF and same-origin checks on every POST.
@@ -515,21 +532,93 @@ export function registerUi(app: Hono, deps: UiDeps): void {
 
   // ---------- keys ----------
 
-  app.get("/keys", (c) => render(c, <KeysPage ctx={ctx(c)} keys={keys.list()} folders={drive.listFolders()} />));
+  // ---------- CyberDrive datasets ----------
+
+  const datasetPage = (c: Context, name: string, status: 200 | 400 = 200, override?: Flash) =>
+    render(
+      c,
+      <DatasetPage
+        ctx={ctx(c, override)}
+        kind={datasets.kind(name)}
+        current={datasets.current(name)}
+        history={datasets.history(name, 20)}
+        keys={keys.list().filter((k) => !k.revoked_at && k.datasets.includes(name))}
+        maxMb={Math.round(config.datasetMaxBytes / 1048576)}
+      />,
+      status,
+    );
+
+  app.get("/datasets/:name", (c) => {
+    const name = c.req.param("name");
+    if (!isDatasetName(name)) return c.notFound();
+    return datasetPage(c, name);
+  });
+
+  app.post("/datasets/:name/import", async (c) => {
+    const name = c.req.param("name");
+    if (!isDatasetName(name)) return c.notFound();
+    try {
+      const [file] = files(await form(c), "file");
+      if (!file) throw new DatasetError(`Choose a file: ${datasets.kind(name).fileHint}`);
+      const row = datasets.importBytes(name, new Uint8Array(await file.arrayBuffer()), `upload:${file.name}`, "admin");
+      return done(c, `/datasets/${name}`, "ok", `Imported version ${row.version}: ${row.rows.toLocaleString("en-US")} rows`);
+    } catch (error) {
+      return done(c, `/datasets/${name}`, "error", userMessage(error));
+    }
+  });
+
+  app.post("/datasets/:name/refresh", async (c) => {
+    const name = c.req.param("name");
+    if (!isDatasetName(name)) return c.notFound();
+    try {
+      const row = await datasets.importFrom(name, undefined, "admin");
+      return done(c, `/datasets/${name}`, "ok", `Downloaded version ${row.version}: ${row.rows.toLocaleString("en-US")} rows`);
+    } catch (error) {
+      return done(c, `/datasets/${name}`, "error", userMessage(error));
+    }
+  });
+
+  const datasetChoices = () => [...datasets.kinds.values()].map((k) => ({ name: k.name, title: k.title }));
+  const keyAccess = (r: { folders: string[]; datasets: string[] }) =>
+    [...r.folders, ...r.datasets.map((d) => `dataset ${d}`)].join(", ");
+
+  app.get("/keys", (c) =>
+    render(c, <KeysPage ctx={ctx(c)} keys={keys.list()} folders={drive.listFolders()} datasets={datasetChoices()} />),
+  );
 
   app.post("/keys", async (c) => {
     const body = await form(c);
     const name = str(body, "name").trim();
     const folders = strings(body, "folders");
+    const grants = strings(body, "datasets");
     try {
-      const { key, record } = keys.create(name, folders);
-      drive.logActivity("admin", "key.create", null, `${record.name}: ${record.folders.join(", ")}`);
+      const { key, record } = keys.create(name, folders, grants);
+      drive.logActivity("admin", "key.create", null, `${record.name}: ${keyAccess(record)}`);
       const base = ctx(c);
-      const created = { name: record.name, token: key, folders: record.folders, snippets: connectionSnippets(base.mcpUrl, key) };
-      return render(c, <KeysPage ctx={base} keys={keys.list()} folders={drive.listFolders()} created={created} />);
+      const created = {
+        name: record.name,
+        token: key,
+        folders: record.folders,
+        datasets: record.datasets,
+        snippets: connectionSnippets(base.mcpUrl, key),
+      };
+      return render(
+        c,
+        <KeysPage ctx={base} keys={keys.list()} folders={drive.listFolders()} datasets={datasetChoices()} created={created} />,
+      );
     } catch (error) {
       const page = ctx(c, { kind: "error", message: userMessage(error) });
-      return render(c, <KeysPage ctx={page} keys={keys.list()} folders={drive.listFolders()} form={{ name, folders }} />, 400);
+      return render(
+        c,
+        <KeysPage
+          ctx={page}
+          keys={keys.list()}
+          folders={drive.listFolders()}
+          datasets={datasetChoices()}
+          form={{ name, folders, datasets: grants }}
+        />,
+        400,
+      );
     }
   });
 
@@ -544,9 +633,10 @@ export function registerUi(app: Hono, deps: UiDeps): void {
     try {
       const record = keyId(c);
       if (record.revoked_at) throw new DriveError("That key is revoked");
-      const updated = keys.setFolders(record.id, strings(await form(c), "folders"));
-      drive.logActivity("admin", "key.folders", null, `${updated.name}: ${updated.folders.join(", ")}`);
-      return done(c, "/keys", "ok", `${updated.name} can now read ${updated.folders.join(", ")}`);
+      const body = await form(c);
+      const updated = keys.setFolders(record.id, strings(body, "folders"), strings(body, "datasets"));
+      drive.logActivity("admin", "key.folders", null, `${updated.name}: ${keyAccess(updated)}`);
+      return done(c, "/keys", "ok", `${updated.name} can now read ${keyAccess(updated)}`);
     } catch (error) {
       return done(c, "/keys", "error", userMessage(error));
     }

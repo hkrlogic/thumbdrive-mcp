@@ -11,10 +11,15 @@
  *   npm run admin -- ls [drive-path]
  *   npm run admin -- history <drive-path>
  *   npm run admin -- restore <drive-path> <version>
- *   npm run admin -- key create <name> --folder <drive-folder> [--folder ...]
+ *   npm run admin -- key create <name> [--folder <drive-folder> ...] [--dataset oui ...]
+ *   npm run admin -- key datasets <name> [dataset ...]
  *   npm run admin -- key list
  *   npm run admin -- key revoke <name>
  *   npm run admin -- activity [count]
+ *   npm run admin -- cyberdrive oui import [path-or-url]   (no argument: the default source URL)
+ *   npm run admin -- cyberdrive oui status
+ *   npm run admin -- cyberdrive oui lookup <mac> [mac ...]
+ *   npm run admin -- cyberdrive oui search <vendor>
  *   npm run admin -- set-password          (prompts; or pipe the password on stdin)
  */
 import { readFileSync, readdirSync, statSync } from "node:fs";
@@ -22,6 +27,9 @@ import path from "node:path";
 import { KeyStore } from "./auth/keys.ts";
 import { createInterface } from "node:readline";
 import { loadConfig } from "./config.ts";
+import { DATASET_NAMES, isDatasetName } from "./cyberdrive/datasets.ts";
+import { createDatasetStore } from "./cyberdrive/index.ts";
+import { OuiLookup } from "./cyberdrive/oui.ts";
 import { moveEntry } from "./ops.ts";
 import { Drive } from "./storage/drive.ts";
 import { joinDrivePath, normalizeDrivePath } from "./storage/paths.ts";
@@ -36,10 +44,15 @@ const USAGE = [
   "ls [drive-path]",
   "history <drive-path>",
   "restore <drive-path> <version>",
-  "key create <name> --folder <drive-folder> [--folder ...]",
+  "key create <name> [--folder <drive-folder> ...] [--dataset <dataset> ...]",
+  "key datasets <name> [dataset ...]      (replace a key's datasets; none clears them)",
   "key list",
   "key revoke <name>",
   "activity [count]",
+  `cyberdrive <${DATASET_NAMES.join("|")}> import [path-or-url]`,
+  `cyberdrive <${DATASET_NAMES.join("|")}> status`,
+  "cyberdrive oui lookup <mac> [mac ...]",
+  "cyberdrive oui search <vendor>",
   "set-password",
 ]
   .map((line) => `  admin ${line}`)
@@ -164,20 +177,34 @@ async function main(argv: string[]): Promise<void> {
         if (sub === "create") {
           if (!name) usage("key create needs <name>");
           const folders: string[] = [];
+          const datasets: string[] = [];
           for (let i = 0; i < flags.length; i++) {
             if (flags[i] === "--folder" && flags[i + 1]) folders.push(flags[++i]);
+            else if (flags[i] === "--dataset" && flags[i + 1]) datasets.push(flags[++i]);
             else usage(`Unknown option ${flags[i]}`);
           }
-          if (folders.length === 0) usage("key create needs at least one --folder (use / for the whole drive)");
-          const { key, record } = keys.create(name, folders);
-          console.log(`Key "${record.name}" (read-only) for ${record.folders.join(", ")}`);
+          if (folders.length === 0 && datasets.length === 0) {
+            usage("key create needs at least one --folder (use / for the whole drive) or --dataset");
+          }
+          const { key, record } = keys.create(name, folders, datasets);
+          const access = [...record.folders, ...record.datasets.map((d) => `cyberdrive:${d}`)];
+          drive.logActivity("admin", "key.create", null, `${record.name}: ${access.join(", ")}`);
+          console.log(`Key "${record.name}" (read-only) for ${access.join(", ")}`);
           console.log(`\n  ${key}\n`);
           console.log("Copy it now; it is stored hashed and cannot be shown again.");
         } else if (sub === "list") {
           for (const k of keys.list()) {
             const state = k.revoked_at ? `revoked ${k.revoked_at}` : `last used ${k.last_used_at ?? "never"}`;
-            console.log(`${k.name}\t${k.prefix}…\t${k.folders.join(",")}\t${state}`);
+            const access = [...k.folders, ...k.datasets.map((d) => `cyberdrive:${d}`)].join(",");
+            console.log(`${k.name}\t${k.prefix}…\t${access}\t${state}`);
           }
+        } else if (sub === "datasets") {
+          if (!name) usage("key datasets needs <name>");
+          const record = keys.list().find((k) => k.name === name && !k.revoked_at);
+          if (!record) throw new Error(`No active key named ${name}`);
+          const updated = keys.setDatasets(record.id, flags);
+          drive.logActivity("admin", "key.folders", null, `${updated.name}: datasets ${updated.datasets.join(", ") || "none"}`);
+          console.log(`${updated.name} datasets: ${updated.datasets.join(", ") || "none"}`);
         } else if (sub === "revoke") {
           if (!name) usage("key revoke needs <name>");
           console.log(keys.revoke(name) ? `Revoked ${name}` : `No active key named ${name}`);
@@ -187,6 +214,28 @@ async function main(argv: string[]): Promise<void> {
       case "activity": {
         const rows = drive.recentActivity(Number(rest[0] ?? 50)).reverse();
         for (const a of rows) console.log(`${a.at}\t${a.actor}\t${a.action}\t${a.path ?? ""}\t${a.detail ?? ""}`);
+        break;
+      }
+      case "cyberdrive": {
+        const [name, sub, ...args] = rest;
+        if (!name || !isDatasetName(name)) usage(`cyberdrive needs a dataset: ${DATASET_NAMES.join(", ")}`);
+        const datasets = createDatasetStore(drive, config);
+        if (sub === "import") {
+          const row = await datasets.importFrom(name, args[0], "admin");
+          console.log(
+            `Imported ${name} v${row.version}: ${row.rows} rows${row.skipped ? ` (${row.skipped} skipped)` : ""} from ${row.source}\nsha256 ${row.sha256}`,
+          );
+        } else if (sub === "status") {
+          const history = datasets.history(name, 10);
+          if (history.length === 0) console.log(`${name}: not imported yet`);
+          for (const h of history) console.log(`v${h.version}\t${h.imported_at}\t${h.rows} rows\t${h.actor}\t${h.source}\t${h.sha256}`);
+        } else if (sub === "lookup" && name === "oui") {
+          if (args.length === 0) usage("cyberdrive oui lookup needs <mac>");
+          console.log(JSON.stringify(new OuiLookup(datasets).lookup(args), null, 2));
+        } else if (sub === "search" && name === "oui") {
+          if (!args[0]) usage("cyberdrive oui search needs <vendor>");
+          console.log(JSON.stringify(new OuiLookup(datasets).searchVendor(args.join(" ")), null, 2));
+        } else usage(`Unknown cyberdrive command ${sub ?? ""}`);
         break;
       }
       default:
