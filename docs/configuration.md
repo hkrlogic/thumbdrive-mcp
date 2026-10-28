@@ -37,6 +37,13 @@ See also: [web-ui.md](web-ui.md) for the screens, [security.md](security.md) for
 | `READ_PAGE_BYTES` | `65536` | Bytes per page for the `read` tool. Larger files come back in pages. |
 | `READ_PAGE_ROWS` | `200` | Rows per page when `read` returns CSV or TSV as rows (`format: "text"`). |
 
+### CyberDrive datasets
+
+| Variable | Default | What it does |
+| --- | --- | --- |
+| `DATASET_MAX_MB` | `100` | Largest CyberDrive dataset file, in MB, for a web upload, a **Refresh from source** download or a CLI import. It is separate from `MAX_FILE_MB` because the OUI database is about 20 MB. Larger uploads are refused with `413`. |
+| `CYBERDRIVE_AUTO_REFRESH` | (off) | Set it to `1` to re-download each imported dataset from its default source when the current import is more than 30 days old (checked every 6 hours). Datasets never imported are not downloaded. See [cyberdrive.md](cyberdrive.md). |
+
 ### Admin and agents
 
 | Variable | Default | What it does |
@@ -110,11 +117,23 @@ Drive paths start with `/`, such as `/team/handbook.pdf`.
 
 | Command | What it does |
 | --- | --- |
-| `key create <name> --folder <drive-folder> [--folder ...]` | Create a read-only key for one or more folders (use `--folder /` for the whole drive). The key is printed **once**; only its hash is stored. |
+| `key create <name> [--folder <drive-folder> ...] [--dataset oui]` | Create a read-only key for one or more folders (use `--folder /` for the whole drive) and/or CyberDrive datasets. A key needs at least one of them. The key is printed **once**; only its hash is stored. |
+| `key datasets <name> [dataset ...]` | Set the CyberDrive datasets a key can query (`oui`). With no dataset, removes them (a key with no folders must keep one). |
 | `key list` | List keys: name, prefix, folders, and last use or revocation time. |
 | `key revoke <name>` | Turn a key off at once. |
 
-To change a key's folders without changing the key, use **Edit** on the **Agent keys** page.
+To change a key's folders or datasets without changing the key, use **Edit** on the **Agent keys** page.
+
+### CyberDrive
+
+| Command | What it does |
+| --- | --- |
+| `cyberdrive oui import [path-or-url]` | Validate and import an OUI SQLite database as the next version. With no argument, downloads the default source. Prints the version, rows and SHA-256. |
+| `cyberdrive oui status` | Every import: version, time (UTC), rows, who, source and SHA-256. |
+| `cyberdrive oui lookup <mac> [mac ...]` | The `lookup_mac` result as JSON (not logged as an agent read). |
+| `cyberdrive oui search <vendor>` | The `search_oui_vendor` result as JSON. |
+
+See [cyberdrive.md](cyberdrive.md) for the dataset format, access model and license note.
 
 ### Activity and the admin password
 

@@ -87,6 +87,7 @@ The UI is served at `/` on the same port as `/mcp`. See the [Web UI guide](docs/
 | Files | Browse; create, rename, move and delete folders; drag and drop files or whole folders to upload; download, rename, move and delete files; view a file's versions and restore any of them; restore deleted files |
 | Agent keys | Create a key for one or more folders. The key is shown once, with a copy button and snippets for Cursor, Claude Desktop (via `mcp-remote`), Claude Code and other clients that use the address you opened the UI on. Change a key's folders or revoke it |
 | Share links | Give a person read-only browser access to one folder: 1 hour, 1 day (default), 7 days or 30 days. Links are random 256-bit tokens stored as hashes. Revoke any time |
+| OUI database | CyberDrive: import or refresh the MAC vendor (OUI) database, see its version, rows, source and SHA-256, and which keys can query it. See [docs/cyberdrive.md](docs/cyberdrive.md) |
 | Activity | Every agent read (key, tool, path, time), filterable by key, action and path; optionally your own changes and share-link downloads |
 | Settings | Change the admin password (signs out every other session) |
 
@@ -138,6 +139,17 @@ All four are annotated `readOnlyHint: true`. Anything outside the key's folders 
 
 Text views for Excel, PDF and Word files are not built yet: `format: "text"` says so, and `format: "raw"` returns them as base64.
 
+## CyberDrive
+
+CyberDrive adds read-only security reference datasets that agents query with cited answers. The first is the MAC address vendor (OUI) database:
+
+| Tool | What it does |
+| --- | --- |
+| `lookup_mac(macs)` | Up to 50 MACs or prefixes in any common format (`00:1A:2B:3C:4D:5E`, `00-1a-2b-...`, `001a.2b3c.4d5e`, `001A2B`). Longest-prefix match (MA-S 9, MA-M 7, then MA-L 6 nibbles); flags locally administered and multicast addresses; says `No match` explicitly. Each match has a citation such as `cyberdrive:oui@v3#00:00:0C` |
+| `search_oui_vendor(query, limit)` | Find prefixes by vendor name |
+
+The dataset is not bundled (it includes GPLv2 Wireshark and Nmap data). Import it from **OUI database** in the web UI (upload, or **Refresh from source**) or with `npm run admin -- cyberdrive oui import`. Keys get these tools only when you grant the dataset; a whole-drive key does not get it automatically. Every lookup is logged. Details, the access model, output format and license note: [docs/cyberdrive.md](docs/cyberdrive.md).
+
 ## Admin CLI
 
 Every command is described in [docs/configuration.md](docs/configuration.md#admin-cli).
@@ -148,7 +160,10 @@ npm run admin -- import <local-folder> <drive-folder>
 npm run admin -- mkdir | rm | ls | history <drive-path>
 npm run admin -- mv <drive-path> <new-drive-path>
 npm run admin -- restore <drive-path> <version>
-npm run admin -- key create <name> --folder <folder> [--folder ...]
+npm run admin -- key create <name> [--folder <folder> ...] [--dataset oui]
+npm run admin -- key datasets <name> [oui]
+npm run admin -- cyberdrive oui import [path-or-url] | status
+npm run admin -- cyberdrive oui lookup <mac> ... | search <vendor>
 npm run admin -- key list | key revoke <name>
 npm run admin -- activity [count]
 npm run admin -- set-password         # prompts, or reads the first line of stdin
@@ -161,7 +176,7 @@ data/
   files/        current files, as plain files
   versions/     every stored version, named by SHA-256
   thumbdrive.db versions, hashed keys and share links, admin password hash,
-                sessions, activity log (SQLite)
+                sessions, activity log, CyberDrive datasets (SQLite)
 ```
 
 Every admin change adds a version; deletes keep history. Files you copy into `data/files` by hand are served too, and get their first version on the next admin change. Symlinks inside the drive are ignored.
@@ -178,6 +193,8 @@ The main settings are below. [docs/configuration.md](docs/configuration.md) list
 | `ALLOWED_HOSTS` | | Host names accepted in `Host`/`Origin` besides localhost and private IPs, comma separated (e.g. `nas.local`) |
 | `ALLOW_INSECURE_HTTP` | | `1` accepts plain HTTP from public addresses. Not recommended |
 | `MAX_FILE_MB` | `50` | Largest file the admin can store or upload |
+| `DATASET_MAX_MB` | `100` | Largest CyberDrive dataset file (upload, download or CLI import) |
+| `CYBERDRIVE_AUTO_REFRESH` | | `1` re-downloads imported datasets from their source when older than 30 days. Off by default |
 | `READ_PAGE_BYTES` | `65536` | Bytes per read page |
 | `READ_PAGE_ROWS` | `200` | Rows per CSV page |
 | `RATE_LIMIT_PER_MINUTE` | `120` | Requests per key per minute |
