@@ -20,7 +20,7 @@
     "lint": "biome lint",
     "admin": "node --disable-warning=ExperimentalWarning --import tsx src/admin.ts",
     "smoke": "node --disable-warning=ExperimentalWarning --import tsx scripts/smoke.ts",
-    "build": "tsc -p tsconfig.build.json"
+    "build": "tsc -p tsconfig.build.json && node -e \"require('node:fs').cpSync('src/web/static','dist/web/static',{recursive:true})\""
   },
   "dependencies": {
     "@hono/node-server": "^2.1.5",

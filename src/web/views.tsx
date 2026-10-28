@@ -22,12 +22,12 @@ export function formatBytes(n: number | null | undefined): string {
   return `${i === 0 ? value : value.toFixed(1)} ${units[i]}`;
 }
 
-const nameOf = (p: string) => segmentsOf(p).at(-1) ?? "/";
-const q = (p: string) => encodeURIComponent(p);
+export const nameOf = (p: string) => segmentsOf(p).at(-1) ?? "/";
+export const q = (p: string) => encodeURIComponent(p);
 export const filesUrl = (p: string) => (p === "/" ? "/files" : `/files?path=${q(p)}`);
 export const fileUrl = (p: string) => `/files/file?path=${q(p)}`;
 
-const Time: FC<{ iso: string | null | undefined; abs?: boolean; empty?: string }> = ({ iso, abs, empty }) =>
+export const Time: FC<{ iso: string | null | undefined; abs?: boolean; empty?: string }> = ({ iso, abs, empty }) =>
   iso ? (
     <time datetime={iso} data-abs={abs ? "" : undefined}>
       {iso.replace("T", " ").slice(0, 16)} UTC
@@ -146,6 +146,12 @@ export const Icon = {
       <path d="M20 14.5A8 8 0 0 1 9.5 4 8 8 0 1 0 20 14.5z" />
     </Svg>
   ),
+  table: () => (
+    <Svg>
+      <rect x="3" y="4" width="18" height="16" rx="1.5" />
+      <path d="M3 9.5h18M3 15h18M9 4v16" />
+    </Svg>
+  ),
   logout: () => (
     <Svg>
       <path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3M10 17l-5-5 5-5M5 12h11" />
@@ -166,7 +172,7 @@ export interface PageCtx {
   flash?: Flash;
 }
 
-const Csrf: FC<{ ctx: PageCtx }> = ({ ctx }) => <input type="hidden" name="_csrf" value={ctx.csrf} />;
+export const Csrf: FC<{ ctx: PageCtx }> = ({ ctx }) => <input type="hidden" name="_csrf" value={ctx.csrf} />;
 
 const FlashBox: FC<{ flash?: Flash }> = ({ flash }) =>
   flash ? (
@@ -185,7 +191,13 @@ export const CopyField: FC<{ id: string; value: string; big?: boolean; label?: s
   </div>
 );
 
-const Head: FC<{ title: string; csrf?: string }> = ({ title, csrf }) => (
+/** Extra same-origin assets for one page (e.g. the tables grid). */
+export interface PageAssets {
+  css?: string[];
+  js?: string[];
+}
+
+const Head: FC<{ title: string; csrf?: string; assets?: PageAssets }> = ({ title, csrf, assets }) => (
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -196,8 +208,14 @@ const Head: FC<{ title: string; csrf?: string }> = ({ title, csrf }) => (
     <title>{title} · Thumbdrive</title>
     <link rel="icon" href="/assets/icon.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="/assets/app.css" />
+    {(assets?.css ?? []).map((href) => (
+      <link rel="stylesheet" href={href} />
+    ))}
     <script src="/assets/theme.js"></script>
     <script src="/assets/app.js" defer></script>
+    {(assets?.js ?? []).map((src) => (
+      <script src={src} defer></script>
+    ))}
   </head>
 );
 
@@ -215,6 +233,7 @@ const NAV = [
   { href: "/", label: "Dashboard", icon: Icon.home, id: "home" },
   { href: "/files", label: "Files", icon: Icon.folder, id: "files" },
   { href: "/keys", label: "Agent keys", icon: Icon.key, id: "keys" },
+  { href: "/tables", label: "Tables", icon: Icon.table, id: "tables" },
   { href: "/shares", label: "Share links", icon: Icon.link, id: "shares" },
   { href: "/datasets/oui", label: "OUI database", icon: Icon.shield, id: "dataset-oui" },
   { href: "/datasets/winevent", label: "Windows events", icon: Icon.shield, id: "dataset-winevent" },
@@ -225,14 +244,16 @@ const NAV = [
   { href: "/settings", label: "Settings", icon: Icon.settings, id: "settings" },
 ] as const;
 
-export const Layout: FC<PropsWithChildren<{ ctx: PageCtx; title: string; active: string }>> = ({
+export const Layout: FC<PropsWithChildren<{ ctx: PageCtx; title: string; active: string; assets?: PageAssets; wide?: boolean }>> = ({
   ctx,
   title,
   active,
+  assets,
+  wide,
   children,
 }) => (
   <html lang="en">
-    <Head title={title} csrf={ctx.csrf} />
+    <Head title={title} csrf={ctx.csrf} assets={assets} />
     <body>
       <a class="skip" href="#main">
         Skip to content
@@ -267,7 +288,7 @@ export const Layout: FC<PropsWithChildren<{ ctx: PageCtx; title: string; active:
             <span class="muted small label">v{APP_VERSION}</span>
           </div>
         </header>
-        <main id="main">
+        <main id="main" class={wide ? "wide" : undefined}>
           <FlashBox flash={ctx.flash} />
           {children}
         </main>
@@ -276,7 +297,7 @@ export const Layout: FC<PropsWithChildren<{ ctx: PageCtx; title: string; active:
   </html>
 );
 
-const PageHead: FC<PropsWithChildren<{ title: Child; sub?: Child }>> = ({ title, sub, children }) => (
+export const PageHead: FC<PropsWithChildren<{ title: Child; sub?: Child }>> = ({ title, sub, children }) => (
   <div class="page-head">
     <div>
       <h1>{title}</h1>
@@ -445,7 +466,7 @@ export const DashboardPage: FC<{ ctx: PageCtx; data: DashboardData }> = ({ ctx, 
 
 // ---------- files ----------
 
-const Crumbs: FC<{ path: string; base?: (p: string) => string; rootLabel?: string; currentIsFile?: boolean }> = ({
+export const Crumbs: FC<{ path: string; base?: (p: string) => string; rootLabel?: string; currentIsFile?: boolean }> = ({
   path,
   base = filesUrl,
   rootLabel = "Drive",
@@ -540,6 +561,8 @@ export interface FolderData {
   entries: Entry[];
   deleted: Array<{ path: string; name: string; deleted_at: string }>;
   maxFileBytes: number;
+  /** User-editable tables that live in this folder. */
+  tables?: Array<{ id: number; name: string; title: string; publishedVersion: number; dirty: boolean }>;
 }
 
 export const FolderPage: FC<{ ctx: PageCtx; data: FolderData }> = ({ ctx, data }) => {
@@ -567,6 +590,9 @@ export const FolderPage: FC<{ ctx: PageCtx; data: FolderData }> = ({ ctx, data }
               </form>
             </div>
           </details>
+          <a class="btn" href={`/tables?folder=${q(path)}#new-table`}>
+            <Icon.table /> New table
+          </a>
           <a class="btn" href={`/shares?folder=${q(path)}#new-share`}>
             <Icon.link /> Share
           </a>
@@ -585,6 +611,25 @@ export const FolderPage: FC<{ ctx: PageCtx; data: FolderData }> = ({ ctx, data }
         </div>
       </div>
       <div class="stack">
+        {data.tables?.length ? (
+          <section class="card flush" aria-labelledby="folder-tables-h">
+            <div class="card-head">
+              <h2 id="folder-tables-h">Tables in this folder</h2>
+            </div>
+            <ul class="table-links">
+              {data.tables.map((t) => (
+                <li>
+                  <a href={`/tables/${t.id}`}>
+                    <Icon.table /> {t.name}
+                  </a>{" "}
+                  <span class="muted small">{t.title !== t.name ? t.title : ""}</span>{" "}
+                  {t.publishedVersion ? <span class="badge ok">v{t.publishedVersion}</span> : <span class="badge">not published</span>}{" "}
+                  {t.dirty ? <span class="badge warn">draft changes</span> : null}
+                </li>
+              ))}
+            </ul>
+          </section>
+        ) : null}
         <form
           id="dropzone"
           class="dropzone"
@@ -1577,7 +1622,7 @@ export const SettingsPage: FC<{ ctx: PageCtx; dataDir: string; maxFileBytes: num
 
 // ---------- public share pages ----------
 
-const ShareShell: FC<PropsWithChildren<{ title: string }>> = ({ title, children }) => (
+export const ShareShell: FC<PropsWithChildren<{ title: string }>> = ({ title, children }) => (
   <html lang="en">
     <Head title={title} />
     <body>
@@ -1594,7 +1639,9 @@ export const SharePage: FC<{
   share: ShareRecord;
   rel: string;
   entries: Entry[];
-}> = ({ token, share, rel, entries }) => {
+  /** Published tables in this folder (read-only). */
+  tables?: Array<{ rel: string; name: string; title: string; version: number; rows: number }>;
+}> = ({ token, share, rel, entries, tables }) => {
   const base = (p: string) => (p === "/" ? `/s/${token}` : `/s/${token}?path=${q(p)}`);
   const title = share.label ?? nameOf(share.folder);
   return (
@@ -1664,6 +1711,28 @@ export const SharePage: FC<{
           </div>
         )}
       </section>
+      {tables?.length ? (
+        <section class="card flush" aria-labelledby="share-tables-h">
+          <div class="card-head">
+            <h2 id="share-tables-h">Tables</h2>
+          </div>
+          <ul class="table-links">
+            {tables.map((t) => (
+              <li>
+                <a href={`/s/${token}/table?path=${q(t.rel)}`}>
+                  <Icon.table /> {t.title}
+                </a>{" "}
+                <span class="muted small">
+                  v{t.version} · {t.rows} row{t.rows === 1 ? "" : "s"}
+                </span>{" "}
+                <a class="btn sm" href={`/s/${token}/table.csv?path=${q(t.rel)}`} aria-label={`Download ${t.title} as CSV`}>
+                  <Icon.download /> CSV
+                </a>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
     </ShareShell>
   );
 };

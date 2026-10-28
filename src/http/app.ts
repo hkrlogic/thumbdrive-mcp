@@ -17,6 +17,8 @@ import type { DatasetStore } from "../cyberdrive/datasets.ts";
 import { createDatasetStore } from "../cyberdrive/index.ts";
 import { createMcpServer } from "../mcp/server.ts";
 import type { Drive } from "../storage/drive.ts";
+import { TableReader } from "../tables/agent.ts";
+import { TableStore } from "../tables/store.ts";
 import { APP_NAME, APP_VERSION } from "../version.ts";
 import { AdminAuth, LoginLimiter } from "../web/auth.ts";
 import { ShareStore } from "../web/shares.ts";
@@ -28,6 +30,8 @@ export interface AppDeps {
   config: Config;
   /** CyberDrive datasets; created from the drive when omitted. */
   datasets?: DatasetStore;
+  /** User tables; created from the drive when omitted. */
+  tables?: TableStore;
 }
 
 /** Loopback and private (RFC 1918, CGNAT, ULA, link-local) addresses: plain HTTP is acceptable there. */
@@ -144,10 +148,11 @@ export interface App {
   app: Hono;
   auth: AdminAuth;
   datasets: DatasetStore;
+  tables: TableStore;
   close: () => Promise<void>;
 }
 
-export function createApp({ drive, keys, config, datasets = createDatasetStore(drive, config) }: AppDeps): App {
+export function createApp({ drive, keys, config, datasets = createDatasetStore(drive, config), tables = new TableStore(drive) }: AppDeps): App {
   const app = new Hono();
   const limiter = new RateLimiter(config.rateLimitPerMinute);
   const allowedHosts = config.allowedHosts.map(hostnameOf);
@@ -163,7 +168,8 @@ export function createApp({ drive, keys, config, datasets = createDatasetStore(d
         pageBytes: config.readPageBytes,
         pageRows: config.readPageRows,
       });
-      return createMcpServer(reader, new DatasetReader(datasets, extra?.datasets ?? [], actor));
+      const datasetReader = new DatasetReader(datasets, extra?.datasets ?? [], actor);
+      return createMcpServer(reader, datasetReader, new TableReader(tables, reader.scope, actor, datasetReader));
     },
     { onerror: (error) => console.error("[thumbdrive] mcp:", error.message) },
   );
@@ -212,6 +218,7 @@ export function createApp({ drive, keys, config, datasets = createDatasetStore(d
     drive,
     keys,
     datasets,
+    tables,
     config,
     auth,
     shares: new ShareStore(drive.db),
@@ -220,5 +227,5 @@ export function createApp({ drive, keys, config, datasets = createDatasetStore(d
     clientAddress: (c) => remoteAddress(c) ?? "local",
   });
 
-  return { app, auth, datasets, close: () => handler.close() };
+  return { app, auth, datasets, tables, close: () => handler.close() };
 }

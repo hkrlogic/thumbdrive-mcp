@@ -21,11 +21,15 @@ import type { Config } from "../config.ts";
 import { DatasetError, type DatasetStore, isDatasetName } from "../cyberdrive/datasets.ts";
 import { moveEntry } from "../ops.ts";
 import { DriveError, type Drive, NotFoundError } from "../storage/drive.ts";
+import { TableError, type TableStore } from "../tables/store.ts";
 import { InvalidPathError, isWithin, joinDrivePath, normalizeDrivePath, parentOf, segmentsOf } from "../storage/paths.ts";
 import { APP_CSS, APP_JS, ICON_SVG, THEME_JS } from "./assets.ts";
 import { type AdminAuth, type LoginLimiter, MIN_PASSWORD_LENGTH } from "./auth.ts";
 import { DEFAULT_SHARE_HOURS, type ShareStore } from "./shares.ts";
 import { connectionSnippets } from "./snippets.ts";
+import { STATIC_PATHS, staticAsset } from "./static.ts";
+import { csvResponse, registerTablesUi, sharedTables, tableCsv } from "./tables-ui.tsx";
+import { ShareTablePage } from "./tables-views.tsx";
 import {
   ActivityPage,
   DashboardPage,
@@ -49,6 +53,7 @@ export interface UiDeps {
   drive: Drive;
   keys: KeyStore;
   datasets: DatasetStore;
+  tables: TableStore;
   config: Config;
   auth: AdminAuth;
   shares: ShareStore;
@@ -94,7 +99,8 @@ function userMessage(error: unknown): string {
     error instanceof DriveError ||
     error instanceof NotFoundError ||
     error instanceof InvalidPathError ||
-    error instanceof DatasetError
+    error instanceof DatasetError ||
+    error instanceof TableError
   ) {
     return error.message;
   }
@@ -127,7 +133,7 @@ function downloadResponse(name: string, bytes: Uint8Array, sha256: string): Resp
 }
 
 export function registerUi(app: Hono, deps: UiDeps): void {
-  const { drive, keys, datasets, config, auth, shares, loginLimiter } = deps;
+  const { drive, keys, datasets, tables, config, auth, shares, loginLimiter } = deps;
 
   // ---------- plumbing ----------
 
@@ -234,11 +240,14 @@ export function registerUi(app: Hono, deps: UiDeps): void {
     maxSize: config.datasetMaxBytes + 1024 * 1024,
     onError: (c) => c.text(`Too large: the dataset limit is ${Math.round(config.datasetMaxBytes / 1048576)} MB (DATASET_MAX_MB)`, 413),
   });
-  const isDatasetUpload = (p: string) => /^\/datasets\/[a-z]+\/import$/.test(p);
+  const isDatasetUpload = (p: string) => /^\/datasets\/[a-z]+\/import$/.test(p) || p === "/tables/import";
+  // Grid edits and pastes can carry thousands of rows.
+  const tableLimit = bodyLimit({ maxSize: 8 * 1024 * 1024, onError: tooLarge });
+  const isTableBulk = (p: string) => /^\/tables\/\d+\/(edits|paste)$/.test(p) || p.startsWith("/tables/import/");
   app.use("*", async (c, next) => {
     if (c.req.method !== "POST" || c.req.path === "/mcp") return next();
     const p = c.req.path;
-    return (p === "/files/upload" ? uploadLimit : isDatasetUpload(p) ? datasetLimit : formLimit)(c, next);
+    return (p === "/files/upload" ? uploadLimit : isDatasetUpload(p) ? datasetLimit : isTableBulk(p) ? tableLimit : formLimit)(c, next);
   });
 
   // CSRF and same-origin checks on every POST.
@@ -286,6 +295,12 @@ export function registerUi(app: Hono, deps: UiDeps): void {
   app.get("/assets/app.js", (c) => c.body(APP_JS, 200, { "content-type": "text/javascript; charset=utf-8" }));
   app.get("/assets/theme.js", (c) => c.body(THEME_JS, 200, { "content-type": "text/javascript; charset=utf-8" }));
   app.get("/assets/icon.svg", (c) => c.body(ICON_SVG, 200, { "content-type": "image/svg+xml" }));
+  for (const assetPath of STATIC_PATHS) {
+    app.get(assetPath, (c) => {
+      const asset = staticAsset(assetPath);
+      return asset ? c.body(asset.body as Uint8Array<ArrayBuffer>, 200, { "content-type": asset.type }) : c.notFound();
+    });
+  }
   app.get("/favicon.ico", (c) => c.redirect("/assets/icon.svg", 301));
 
   // ---------- setup, login, logout ----------
@@ -386,7 +401,13 @@ export function registerUi(app: Hono, deps: UiDeps): void {
       if (path === "/") throw new Error("drive root is missing");
       return done(c, filesUrl(parentOf(path)), "error", `Not found: ${path}`);
     }
-    const data = { path, entries: drive.list(path), deleted: drive.listDeleted(path), maxFileBytes: config.maxFileBytes };
+    const data = {
+      path,
+      entries: drive.list(path),
+      deleted: drive.listDeleted(path),
+      maxFileBytes: config.maxFileBytes,
+      tables: tables.list().filter((t) => t.folder === path),
+    };
     return render(c, <FolderPage ctx={ctx(c)} data={data} />);
   });
 
@@ -506,6 +527,12 @@ export function registerUi(app: Hono, deps: UiDeps): void {
     try {
       path = normalizeDrivePath(str(body, "path"));
       if (drive.kind(path) === "folder") {
+        const inside = tables.listUnder(path);
+        if (inside.length) {
+          throw new DriveError(
+            `${path} contains ${inside.length} table(s) (${inside.slice(0, 3).map((t) => t.path).join(", ")}${inside.length > 3 ? ", …" : ""}). Move or delete them first.`,
+          );
+        }
         const n = drive.deleteFolder(path);
         return done(c, filesUrl(parentOf(path)), "ok", `Deleted ${path} (${n} file(s), history kept)`);
       }
@@ -745,6 +772,10 @@ export function registerUi(app: Hono, deps: UiDeps): void {
     return done(c, "/settings", "ok", "Password changed. Other browsers were signed out.");
   });
 
+  // ---------- tables ----------
+
+  registerTablesUi(app, { drive, tables, ctx, render, done, form, wantsJson, userMessage });
+
   // ---------- public share links ----------
 
   const gone = (c: Context) =>
@@ -767,7 +798,45 @@ export function registerUi(app: Hono, deps: UiDeps): void {
     if (!share) return gone(c);
     const target = shareTarget(share.folder, c.req.query("path"));
     if (!target || drive.kind(target.drivePath) !== "folder") return gone(c);
-    return render(c, <SharePage token={token} share={share} rel={target.rel} entries={drive.list(target.drivePath)} />);
+    const rel = (p: string) => (share.folder === "/" ? p : p.slice(share.folder.length) || "/");
+    return render(
+      c,
+      <SharePage
+        token={token}
+        share={share}
+        rel={target.rel}
+        entries={drive.list(target.drivePath)}
+        tables={sharedTables(tables, target.drivePath, rel)}
+      />,
+    );
+  });
+
+  /** A published table inside the shared folder, or undefined. */
+  const sharedTable = (folder: string, rel: string | undefined) => {
+    const target = shareTarget(folder, rel);
+    const t = target && tables.find(target.drivePath);
+    return t && t.publishedVersion > 0 ? { target, published: tables.published(t.id) } : undefined;
+  };
+
+  app.get("/s/:token/table", (c) => {
+    const token = c.req.param("token");
+    const share = shares.verify(token);
+    if (!share) return gone(c);
+    const hit = sharedTable(share.folder, c.req.query("path"));
+    if (!hit) return gone(c);
+    drive.logActivity(`share:#${share.id}`, "table.view", `cyberdrive:${hit.published.table.path}@v${hit.published.version.version}`, `${hit.published.rows.length} rows`);
+    return render(c, <ShareTablePage token={token} share={share} rel={hit.target.rel} published={hit.published} />);
+  });
+
+  app.get("/s/:token/table.csv", (c) => {
+    const share = shares.verify(c.req.param("token"));
+    if (!share) return gone(c);
+    const hit = sharedTable(share.folder, c.req.query("path"));
+    if (!hit) return gone(c);
+    const p = hit.published;
+    shares.recordDownload(share.id);
+    drive.logActivity(`share:#${share.id}`, "table.download", `cyberdrive:${p.table.path}@v${p.version.version}`, `${p.rows.length} rows, CSV`);
+    return csvResponse(`${p.table.name}-v${p.version.version}.csv`, tableCsv(p));
   });
 
   app.get("/s/:token/download", (c) => {
