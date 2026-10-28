@@ -18,7 +18,8 @@ main.wide { max-width: none; }
 .diff-list li.changed { background: var(--accent-soft); color: var(--accent); }
 .diff-list li.removed { background: var(--danger-soft); color: var(--danger); }
 .grid-toolbar { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; margin-bottom: .6rem; }
-.grid-toolbar [data-grid-status] { flex: 1 1 16rem; }
+/* Own line with room for two: a message that changes height would move the rows mid double-click. */
+.grid-toolbar [data-grid-status] { flex: 1 1 100%; min-height: 2.8em; }
 .grid-toolbar [data-grid-status].bad { color: var(--danger); }
 .grid-help { font-size: .85rem; color: var(--muted); margin: .5rem 0 0; }
 .grid-help kbd { font-family: var(--mono); font-size: .8em; border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 4px; padding: 0 .3em; background: var(--surface-2); }

@@ -35,9 +35,10 @@
     statusEl.classList.toggle("bad", !!bad);
   }
 
-  function post(url, body) {
+  function post(url, body, keepalive) {
     return fetch(url, {
       method: "POST",
+      keepalive: !!keepalive,
       credentials: "same-origin",
       headers: { "content-type": "application/json", accept: "application/json", "x-csrf-token": csrf },
       body: JSON.stringify(body),
@@ -212,14 +213,23 @@
     clearTimeout(timer);
     timer = setTimeout(flush, 250);
   }
-  function flush() {
+  function takePending() {
     var updates = Object.keys(pending).map(function (id) {
       return { row: Number(id), values: pending[id] };
     });
     pending = {};
-    if (!updates.length) return;
-    send({ updates: updates });
+    return updates;
   }
+  function flush() {
+    var updates = takePending();
+    if (updates.length) send({ updates: updates });
+  }
+  // A reload or Back inside the batching delay would drop the edit; keepalive outlives the page.
+  window.addEventListener("pagehide", function () {
+    clearTimeout(timer);
+    var updates = takePending();
+    if (updates.length) post(host.dataset.edits, { updates: updates }, true).catch(function () {});
+  });
   function send(edits) {
     setStatus("Saving\u2026");
     return post(host.dataset.edits, edits)
@@ -444,6 +454,14 @@
       // rowgroup (and the inner table presentational) so the ARIA grid structure stays valid.
       var holder = host.querySelector(".tabulator-tableholder");
       var body = host.querySelector(".tabulator-tableholder > .tabulator-table");
+      // Tabulator focuses these on mousedown without preventScroll; when the grid runs past the
+      // window the page jumps, and the second click of a double-click lands on another row.
+      [host, holder].forEach(function (el) {
+        if (el)
+          el.focus = function () {
+            HTMLElement.prototype.focus.call(this, { preventScroll: true });
+          };
+      });
       if (holder && body) {
         holder.setAttribute("role", "rowgroup");
         holder.setAttribute("aria-label", "Rows");
