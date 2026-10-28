@@ -18,6 +18,7 @@ import { hashPassword, verifyPasswordHash } from "../src/web/auth.ts";
 import { ShareStore } from "../src/web/shares.ts";
 import { connectionSnippets } from "../src/web/snippets.ts";
 import { keysFor, tempDrive, testConfig, text } from "./helpers.ts";
+import { csf2Catalog, csf2MapWorkbook, sp80053Catalog } from "./fixtures/controls.ts";
 import { xlsx } from "./xlsx.ts";
 
 const PASSWORD = "correct horse battery";
@@ -707,6 +708,35 @@ test("Windows events page imports the Microsoft workbook and counts events", asy
   assert.match(page.html, /name="datasets" value="winevent"/);
   await b.post("/keys", { name: "win-agent", datasets: "winevent" }, { from: "/keys" });
   assert.deepEqual(keys.list().find((k) => k.name === "win-agent")?.datasets, ["winevent"]);
+});
+
+test("NIST pages import the OSCAL catalogs and the CSF mapping workbook", async () => {
+  const { app, datasets, keys } = setup();
+  const b = await signedIn(app);
+  for (const name of ["nist80053", "csf2", "csf2map"]) {
+    const empty = await b.page(`/datasets/${name}`);
+    assert.equal(empty.status, 200, name);
+    assert.match(empty.html, /Not imported yet/);
+    assert.match(empty.html, new RegExp(`href="/datasets/${name}"`));
+  }
+  assert.match((await b.page("/datasets/nist80053")).html, /raw\.githubusercontent\.com\/usnistgov\/oscal-content/);
+  const files: Array<[string, Uint8Array, string, RegExp]> = [
+    ["nist80053", sp80053Catalog(), "NIST_SP-800-53_rev5_catalog.json", /Imported version 1: 7 controls/],
+    ["csf2", csf2Catalog(), "NIST_CSF_v2.0_catalog.json", /Imported version 1: 10 items/],
+    ["csf2map", csf2MapWorkbook(), "csf2.xlsx", /Imported version 1: 7 mappings/],
+  ];
+  for (const [name, bytes, file, flash] of files) {
+    const up = await b.post(`/datasets/${name}/import`, {}, { from: `/datasets/${name}`, files: [["file", new Blob([new Uint8Array(bytes)]), file]] });
+    assert.equal(up.status, 303);
+    assert.match(await flashOf(b, up.headers.get("location")), flash);
+  }
+  const bad = await b.post("/datasets/csf2/import", {}, { from: "/datasets/csf2", files: [["file", new Blob([new Uint8Array(sp80053Catalog())]), "x.json"]] });
+  assert.match(await flashOf(b, bad.headers.get("location")), /Not a CSF 2\.0 catalog/);
+  assert.equal(datasets.current("csf2")?.version, 1);
+  const page = await b.page("/keys");
+  assert.match(page.html, /name="datasets" value="nist80053"/);
+  await b.post("/keys", { name: "grc-agent", datasets: ["nist80053", "csf2map"] }, { from: "/keys" });
+  assert.deepEqual(keys.list().find((k) => k.name === "grc-agent")?.datasets, ["csf2map", "nist80053"]);
 });
 
 test("dataset uploads have their own size limit", async () => {
