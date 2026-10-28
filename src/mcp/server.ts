@@ -10,6 +10,7 @@ import { type Reader, UsageError } from "../agent/reader.ts";
 import type { DatasetReader } from "../cyberdrive/agent.ts";
 import { DatasetError } from "../cyberdrive/datasets.ts";
 import { OUI_MAX_BATCH } from "../cyberdrive/oui.ts";
+import { WINEVENT_MAX_BATCH } from "../cyberdrive/winevent.ts";
 import { InvalidPathError } from "../storage/paths.ts";
 import { DriveError, NotFoundError } from "../storage/drive.ts";
 import { APP_NAME, APP_VERSION } from "../version.ts";
@@ -53,6 +54,7 @@ const json = (value: unknown) => JSON.stringify(value, null, 2);
 
 export function createMcpServer(reader: Reader, datasets?: DatasetReader): McpServer {
   const oui = datasets?.has("oui") ?? false;
+  const winevent = datasets?.has("winevent") ?? false;
   const server = new McpServer(
     { name: APP_NAME, version: APP_VERSION },
     {
@@ -65,6 +67,12 @@ export function createMcpServer(reader: Reader, datasets?: DatasetReader): McpSe
           ? [
               "CyberDrive: lookup_mac resolves MAC addresses to their IEEE registrant (OUI). Quote the returned citation;",
               "if a result says 'No match' or 'locally administered', say so instead of guessing a vendor.",
+            ]
+          : []),
+        ...(winevent
+          ? [
+              "CyberDrive: lookup_windows_event explains Windows Security log event IDs from Microsoft's 2016 audit events catalog. Quote the citation;",
+              "if a result says 'No match', say the catalog does not cover it (newer Windows 10/11 events and Sysmon are not in it) instead of guessing.",
             ]
           : []),
       ].join(" "),
@@ -180,6 +188,46 @@ export function createMcpServer(reader: Reader, datasets?: DatasetReader): McpSe
         annotations: READ_ONLY,
       },
       async ({ query, limit }) => run(() => ok(json(datasets.searchOuiVendor(query, limit)))),
+    );
+  }
+
+  if (datasets && winevent) {
+    server.registerTool(
+      "lookup_windows_event",
+      {
+        title: "Explain Windows security event IDs",
+        description: [
+          `Look up 1-${WINEVENT_MAX_BATCH} Windows Security log event IDs (e.g. 4624, 4688) in the CyberDrive catalog of Microsoft's Windows Security Audit Events (2016).`,
+          "Each result has result ('match', 'No match' or 'invalid'), audit category and subcategory (plus also_listed_under when the event sits under several),",
+          "summary, minimum OS, every version's detailed message template (%1, %2... are insertion strings), and a citation like cyberdrive:winevent@v1#4624.",
+          "The catalog predates some Windows 10/11 events and does not cover Sysmon or other logs.",
+        ].join(" "),
+        inputSchema: z.object({
+          ids: z
+            .array(z.union([z.number().int(), z.string().max(32)]))
+            .min(1)
+            .max(WINEVENT_MAX_BATCH)
+            .describe("Event IDs, e.g. [4624, 4625] or ['4688']"),
+        }),
+        annotations: READ_ONLY,
+      },
+      async ({ ids }) => run(() => ok(json(datasets.lookupWindowsEvent(ids)))),
+    );
+
+    server.registerTool(
+      "search_windows_events",
+      {
+        title: "Search Windows security events",
+        description:
+          "Search the CyberDrive Windows security events catalog: case-insensitive text in summaries, subcategories and detailed messages, optionally within one audit category (e.g. 'Logon/Logoff', 'Account Management'). Returns the total and up to `limit` events with citations; use lookup_windows_event for the full messages.",
+        inputSchema: z.object({
+          query: z.string().trim().max(100).optional().describe("Text to find, e.g. 'logon', 'Kerberos', 'audit log was cleared'"),
+          category: z.string().trim().max(100).optional().describe("Audit category to search within, e.g. 'Logon/Logoff'"),
+          limit: z.number().int().min(1).max(100).default(20).describe("Most events to return"),
+        }),
+        annotations: READ_ONLY,
+      },
+      async ({ query, category, limit }) => run(() => ok(json(datasets.searchWindowsEvents(query || undefined, category || undefined, limit)))),
     );
   }
 

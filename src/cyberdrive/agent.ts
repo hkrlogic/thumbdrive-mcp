@@ -7,12 +7,14 @@
 import { NotFoundError } from "../storage/drive.ts";
 import type { DatasetName, DatasetStore } from "./datasets.ts";
 import { OuiLookup } from "./oui.ts";
+import { WinEventLookup } from "./winevent.ts";
 
 const clip = (s: string, n = 900) => (s.length > n ? s.slice(0, n - 1) + "…" : s);
 
 export class DatasetReader {
   private readonly granted: Set<string>;
   private readonly oui: OuiLookup;
+  private readonly winevent: WinEventLookup;
 
   constructor(
     private readonly store: DatasetStore,
@@ -21,6 +23,7 @@ export class DatasetReader {
   ) {
     this.granted = new Set(datasets);
     this.oui = new OuiLookup(store);
+    this.winevent = new WinEventLookup(store);
   }
 
   has(name: DatasetName): boolean {
@@ -69,6 +72,29 @@ export class DatasetReader {
       () => this.oui.searchVendor(query, limit),
       (out) => `v${out.version} "${query}": ${out.total} hit(s)`,
       `"${query}"`,
+    );
+  }
+
+  lookupWindowsEvent(ids: Array<string | number>) {
+    return this.logged(
+      "lookup_windows_event",
+      "winevent",
+      () => this.winevent.lookup(ids),
+      (out) =>
+        `v${out.version} ${out.results.length} event(s): ` +
+        out.results.map((r) => `${r.event_id ?? r.input}=${r.result === "match" ? (r.subcategory ?? "match") : r.result}`).join(", "),
+      `${ids.length} event(s)`,
+    );
+  }
+
+  searchWindowsEvents(query: string | undefined, category?: string, limit?: number) {
+    const what = `"${query ?? ""}"${category ? ` in ${category}` : ""}`;
+    return this.logged(
+      "search_windows_events",
+      "winevent",
+      () => this.winevent.search(query, { category, limit }),
+      (out) => `v${out.version} ${what}: ${out.total} hit(s)`,
+      what,
     );
   }
 }
