@@ -12,8 +12,13 @@ import { bodyLimit } from "hono/body-limit";
 import { Reader } from "../agent/reader.ts";
 import type { KeyStore } from "../auth/keys.ts";
 import type { Config } from "../config.ts";
+import { DatasetReader } from "../cyberdrive/agent.ts";
+import type { DatasetStore } from "../cyberdrive/datasets.ts";
+import { createDatasetStore } from "../cyberdrive/index.ts";
 import { createMcpServer } from "../mcp/server.ts";
 import type { Drive } from "../storage/drive.ts";
+import { TableReader } from "../tables/agent.ts";
+import { TableStore } from "../tables/store.ts";
 import { APP_NAME, APP_VERSION } from "../version.ts";
 import { AdminAuth, LoginLimiter } from "../web/auth.ts";
 import { ShareStore } from "../web/shares.ts";
@@ -23,6 +28,10 @@ export interface AppDeps {
   drive: Drive;
   keys: KeyStore;
   config: Config;
+  /** CyberDrive datasets; created from the drive when omitted. */
+  datasets?: DatasetStore;
+  /** User tables; created from the drive when omitted. */
+  tables?: TableStore;
 }
 
 /** Loopback and private (RFC 1918, CGNAT, ULA, link-local) addresses: plain HTTP is acceptable there. */
@@ -138,10 +147,12 @@ function viaHttps(c: Context): boolean {
 export interface App {
   app: Hono;
   auth: AdminAuth;
+  datasets: DatasetStore;
+  tables: TableStore;
   close: () => Promise<void>;
 }
 
-export function createApp({ drive, keys, config }: AppDeps): App {
+export function createApp({ drive, keys, config, datasets = createDatasetStore(drive, config), tables = new TableStore(drive) }: AppDeps): App {
   const app = new Hono();
   const limiter = new RateLimiter(config.rateLimitPerMinute);
   const allowedHosts = config.allowedHosts.map(hostnameOf);
@@ -150,13 +161,15 @@ export function createApp({ drive, keys, config }: AppDeps): App {
 
   const handler = createMcpHandler(
     (ctx) => {
-      const extra = ctx.authInfo?.extra as { folders?: string[] } | undefined;
+      const extra = ctx.authInfo?.extra as { folders?: string[]; datasets?: string[] } | undefined;
       const folders = extra?.folders ?? [];
-      const reader = new Reader(drive, folders, `key:${ctx.authInfo?.clientId ?? "unknown"}`, {
+      const actor = `key:${ctx.authInfo?.clientId ?? "unknown"}`;
+      const reader = new Reader(drive, folders, actor, {
         pageBytes: config.readPageBytes,
         pageRows: config.readPageRows,
       });
-      return createMcpServer(reader);
+      const datasetReader = new DatasetReader(datasets, extra?.datasets ?? [], actor);
+      return createMcpServer(reader, datasetReader, new TableReader(tables, reader.scope, actor, datasetReader));
     },
     { onerror: (error) => console.error("[thumbdrive] mcp:", error.message) },
   );
@@ -196,7 +209,7 @@ export function createApp({ drive, keys, config }: AppDeps): App {
         token: token as string,
         clientId: key.name,
         scopes: ["read"],
-        extra: { keyId: key.id, folders: key.folders },
+        extra: { keyId: key.id, folders: key.folders, datasets: key.datasets },
       },
     });
   });
@@ -204,6 +217,8 @@ export function createApp({ drive, keys, config }: AppDeps): App {
   registerUi(app, {
     drive,
     keys,
+    datasets,
+    tables,
     config,
     auth,
     shares: new ShareStore(drive.db),
@@ -212,5 +227,5 @@ export function createApp({ drive, keys, config }: AppDeps): App {
     clientAddress: (c) => remoteAddress(c) ?? "local",
   });
 
-  return { app, auth, close: () => handler.close() };
+  return { app, auth, datasets, tables, close: () => handler.close() };
 }

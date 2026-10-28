@@ -1,6 +1,7 @@
 /** Server-rendered pages for the admin UI and public share links (Hono JSX, no client framework). */
 import type { Child, FC, PropsWithChildren } from "hono/jsx";
 import type { KeyRecord } from "../auth/keys.ts";
+import type { DatasetImport, DatasetKind } from "../cyberdrive/datasets.ts";
 import type { ActivityRow, DriveStats, Entry, VersionRow } from "../storage/drive.ts";
 import { segmentsOf } from "../storage/paths.ts";
 import { APP_VERSION } from "../version.ts";
@@ -21,12 +22,12 @@ export function formatBytes(n: number | null | undefined): string {
   return `${i === 0 ? value : value.toFixed(1)} ${units[i]}`;
 }
 
-const nameOf = (p: string) => segmentsOf(p).at(-1) ?? "/";
-const q = (p: string) => encodeURIComponent(p);
+export const nameOf = (p: string) => segmentsOf(p).at(-1) ?? "/";
+export const q = (p: string) => encodeURIComponent(p);
 export const filesUrl = (p: string) => (p === "/" ? "/files" : `/files?path=${q(p)}`);
 export const fileUrl = (p: string) => `/files/file?path=${q(p)}`;
 
-const Time: FC<{ iso: string | null | undefined; abs?: boolean; empty?: string }> = ({ iso, abs, empty }) =>
+export const Time: FC<{ iso: string | null | undefined; abs?: boolean; empty?: string }> = ({ iso, abs, empty }) =>
   iso ? (
     <time datetime={iso} data-abs={abs ? "" : undefined}>
       {iso.replace("T", " ").slice(0, 16)} UTC
@@ -94,6 +95,12 @@ export const Icon = {
       <path d="M3 12h4l3-8 4 16 3-8h4" />
     </Svg>
   ),
+  shield: () => (
+    <Svg>
+      <path d="M12 3 4.5 6v5.5c0 4.5 3.2 8.4 7.5 9.5 4.3-1.1 7.5-5 7.5-9.5V6z" />
+      <path d="m9 12 2 2 4-4" />
+    </Svg>
+  ),
   settings: () => (
     <Svg>
       <circle cx="12" cy="12" r="3" />
@@ -139,6 +146,12 @@ export const Icon = {
       <path d="M20 14.5A8 8 0 0 1 9.5 4 8 8 0 1 0 20 14.5z" />
     </Svg>
   ),
+  table: () => (
+    <Svg>
+      <rect x="3" y="4" width="18" height="16" rx="1.5" />
+      <path d="M3 9.5h18M3 15h18M9 4v16" />
+    </Svg>
+  ),
   logout: () => (
     <Svg>
       <path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3M10 17l-5-5 5-5M5 12h11" />
@@ -159,7 +172,7 @@ export interface PageCtx {
   flash?: Flash;
 }
 
-const Csrf: FC<{ ctx: PageCtx }> = ({ ctx }) => <input type="hidden" name="_csrf" value={ctx.csrf} />;
+export const Csrf: FC<{ ctx: PageCtx }> = ({ ctx }) => <input type="hidden" name="_csrf" value={ctx.csrf} />;
 
 const FlashBox: FC<{ flash?: Flash }> = ({ flash }) =>
   flash ? (
@@ -178,7 +191,13 @@ export const CopyField: FC<{ id: string; value: string; big?: boolean; label?: s
   </div>
 );
 
-const Head: FC<{ title: string; csrf?: string }> = ({ title, csrf }) => (
+/** Extra same-origin assets for one page (e.g. the tables grid). */
+export interface PageAssets {
+  css?: string[];
+  js?: string[];
+}
+
+const Head: FC<{ title: string; csrf?: string; assets?: PageAssets }> = ({ title, csrf, assets }) => (
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -189,8 +208,14 @@ const Head: FC<{ title: string; csrf?: string }> = ({ title, csrf }) => (
     <title>{title} · Thumbdrive</title>
     <link rel="icon" href="/assets/icon.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="/assets/app.css" />
+    {(assets?.css ?? []).map((href) => (
+      <link rel="stylesheet" href={href} />
+    ))}
     <script src="/assets/theme.js"></script>
     <script src="/assets/app.js" defer></script>
+    {(assets?.js ?? []).map((src) => (
+      <script src={src} defer></script>
+    ))}
   </head>
 );
 
@@ -208,19 +233,27 @@ const NAV = [
   { href: "/", label: "Dashboard", icon: Icon.home, id: "home" },
   { href: "/files", label: "Files", icon: Icon.folder, id: "files" },
   { href: "/keys", label: "Agent keys", icon: Icon.key, id: "keys" },
+  { href: "/tables", label: "Tables", icon: Icon.table, id: "tables" },
   { href: "/shares", label: "Share links", icon: Icon.link, id: "shares" },
+  { href: "/datasets/oui", label: "OUI database", icon: Icon.shield, id: "dataset-oui" },
+  { href: "/datasets/winevent", label: "Windows events", icon: Icon.shield, id: "dataset-winevent" },
+  { href: "/datasets/nist80053", label: "NIST SP 800-53", icon: Icon.shield, id: "dataset-nist80053" },
+  { href: "/datasets/csf2", label: "NIST CSF 2.0", icon: Icon.shield, id: "dataset-csf2" },
+  { href: "/datasets/csf2map", label: "CSF ↔ 800-53 map", icon: Icon.shield, id: "dataset-csf2map" },
   { href: "/activity", label: "Activity", icon: Icon.activity, id: "activity" },
   { href: "/settings", label: "Settings", icon: Icon.settings, id: "settings" },
 ] as const;
 
-export const Layout: FC<PropsWithChildren<{ ctx: PageCtx; title: string; active: string }>> = ({
+export const Layout: FC<PropsWithChildren<{ ctx: PageCtx; title: string; active: string; assets?: PageAssets; wide?: boolean }>> = ({
   ctx,
   title,
   active,
+  assets,
+  wide,
   children,
 }) => (
   <html lang="en">
-    <Head title={title} csrf={ctx.csrf} />
+    <Head title={title} csrf={ctx.csrf} assets={assets} />
     <body>
       <a class="skip" href="#main">
         Skip to content
@@ -255,7 +288,7 @@ export const Layout: FC<PropsWithChildren<{ ctx: PageCtx; title: string; active:
             <span class="muted small label">v{APP_VERSION}</span>
           </div>
         </header>
-        <main id="main">
+        <main id="main" class={wide ? "wide" : undefined}>
           <FlashBox flash={ctx.flash} />
           {children}
         </main>
@@ -264,7 +297,7 @@ export const Layout: FC<PropsWithChildren<{ ctx: PageCtx; title: string; active:
   </html>
 );
 
-const PageHead: FC<PropsWithChildren<{ title: Child; sub?: Child }>> = ({ title, sub, children }) => (
+export const PageHead: FC<PropsWithChildren<{ title: Child; sub?: Child }>> = ({ title, sub, children }) => (
   <div class="page-head">
     <div>
       <h1>{title}</h1>
@@ -433,7 +466,7 @@ export const DashboardPage: FC<{ ctx: PageCtx; data: DashboardData }> = ({ ctx, 
 
 // ---------- files ----------
 
-const Crumbs: FC<{ path: string; base?: (p: string) => string; rootLabel?: string; currentIsFile?: boolean }> = ({
+export const Crumbs: FC<{ path: string; base?: (p: string) => string; rootLabel?: string; currentIsFile?: boolean }> = ({
   path,
   base = filesUrl,
   rootLabel = "Drive",
@@ -528,6 +561,8 @@ export interface FolderData {
   entries: Entry[];
   deleted: Array<{ path: string; name: string; deleted_at: string }>;
   maxFileBytes: number;
+  /** User-editable tables that live in this folder. */
+  tables?: Array<{ id: number; name: string; title: string; publishedVersion: number; dirty: boolean }>;
 }
 
 export const FolderPage: FC<{ ctx: PageCtx; data: FolderData }> = ({ ctx, data }) => {
@@ -555,6 +590,9 @@ export const FolderPage: FC<{ ctx: PageCtx; data: FolderData }> = ({ ctx, data }
               </form>
             </div>
           </details>
+          <a class="btn" href={`/tables?folder=${q(path)}#new-table`}>
+            <Icon.table /> New table
+          </a>
           <a class="btn" href={`/shares?folder=${q(path)}#new-share`}>
             <Icon.link /> Share
           </a>
@@ -573,6 +611,25 @@ export const FolderPage: FC<{ ctx: PageCtx; data: FolderData }> = ({ ctx, data }
         </div>
       </div>
       <div class="stack">
+        {data.tables?.length ? (
+          <section class="card flush" aria-labelledby="folder-tables-h">
+            <div class="card-head">
+              <h2 id="folder-tables-h">Tables in this folder</h2>
+            </div>
+            <ul class="table-links">
+              {data.tables.map((t) => (
+                <li>
+                  <a href={`/tables/${t.id}`}>
+                    <Icon.table /> {t.name}
+                  </a>{" "}
+                  <span class="muted small">{t.title !== t.name ? t.title : ""}</span>{" "}
+                  {t.publishedVersion ? <span class="badge ok">v{t.publishedVersion}</span> : <span class="badge">not published</span>}{" "}
+                  {t.dirty ? <span class="badge warn">draft changes</span> : null}
+                </li>
+              ))}
+            </ul>
+          </section>
+        ) : null}
         <form
           id="dropzone"
           class="dropzone"
@@ -871,10 +928,38 @@ const FolderChecks: FC<{ folders: string[]; checked: string[]; idPrefix: string;
   </fieldset>
 );
 
+const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+
+export interface DatasetChoice {
+  name: string;
+  title: string;
+}
+
+const DatasetChecks: FC<{ datasets: DatasetChoice[]; checked: string[]; idPrefix: string; legend: string }> = ({
+  datasets,
+  checked,
+  idPrefix,
+  legend,
+}) =>
+  datasets.length === 0 ? null : (
+    <fieldset class="checks">
+      <legend class="sr-only">{legend}</legend>
+      {datasets.map((d) => (
+        <label for={`${idPrefix}-ds-${d.name}`}>
+          <input id={`${idPrefix}-ds-${d.name}`} type="checkbox" name="datasets" value={d.name} checked={checked.includes(d.name)} />
+          <span>
+            {d.title} <span class="muted">cyberdrive:{d.name}</span>
+          </span>
+        </label>
+      ))}
+    </fieldset>
+  );
+
 export interface NewKey {
   name: string;
   token: string;
   folders: string[];
+  datasets: string[];
   snippets: Snippet[];
 }
 
@@ -886,6 +971,9 @@ const NewKeyCard: FC<{ created: NewKey }> = ({ created }) => (
         Copy it now. Only a hash is stored, so it cannot be shown again. It can read{" "}
         {created.folders.map((f) => (
           <span class="badge">{f}</span>
+        ))}
+        {created.datasets.map((d) => (
+          <span class="badge">cyberdrive:{d}</span>
         ))}{" "}
         and nothing else.
       </p>
@@ -928,9 +1016,10 @@ export const KeysPage: FC<{
   ctx: PageCtx;
   keys: KeyRecord[];
   folders: string[];
+  datasets?: DatasetChoice[];
   created?: NewKey;
-  form?: { name: string; folders: string[] };
-}> = ({ ctx, keys, folders, created, form }) => {
+  form?: { name: string; folders: string[]; datasets?: string[] };
+}> = ({ ctx, keys, folders, datasets = [], created, form }) => {
   const active = keys.filter((k) => !k.revoked_at);
   const revoked = keys.filter((k) => k.revoked_at);
   return (
@@ -968,6 +1057,13 @@ export const KeysPage: FC<{
               <strong aria-hidden="true">Folders it can read</strong>
               <FolderChecks folders={folders} checked={form?.folders ?? []} idPrefix="nk" legend="Folders it can read" />
               <span class="hint">Pick one or more. Subfolders are included.</span>
+              {datasets.length ? (
+                <>
+                  <strong aria-hidden="true">CyberDrive datasets</strong>
+                  <DatasetChecks datasets={datasets} checked={form?.datasets ?? []} idPrefix="nk" legend="CyberDrive datasets" />
+                  <span class="hint">Unlocks lookup tools such as lookup_mac. Not included in “Whole drive”.</span>
+                </>
+              ) : null}
             </div>
           </form>
         </section>
@@ -1005,6 +1101,9 @@ export const KeysPage: FC<{
                           {k.folders.map((f) => (
                             <span class="badge">{f}</span>
                           ))}
+                          {k.datasets.map((d) => (
+                            <span class="badge">cyberdrive:{d}</span>
+                          ))}
                         </div>
                       </td>
                       <td class="hide-sm muted">
@@ -1021,8 +1120,14 @@ export const KeysPage: FC<{
                               <Csrf ctx={ctx} />
                               <strong aria-hidden="true">Folders for {k.name}</strong>
                               <FolderChecks folders={folders} checked={k.folders} idPrefix={`k${k.id}`} legend={`Folders for ${k.name}`} />
+                              <DatasetChecks
+                                datasets={datasets}
+                                checked={k.datasets}
+                                idPrefix={`k${k.id}`}
+                                legend={`Datasets for ${k.name}`}
+                              />
                               <button class="btn primary sm" type="submit">
-                                Save folders
+                                Save access
                               </button>
                             </form>
                             <hr />
@@ -1071,6 +1176,139 @@ export const KeysPage: FC<{
     </Layout>
   );
 };
+
+// ---------- CyberDrive datasets ----------
+
+export const DatasetPage: FC<{
+  ctx: PageCtx;
+  kind: DatasetKind;
+  current?: DatasetImport;
+  history: DatasetImport[];
+  keys: KeyRecord[];
+  maxMb: number;
+}> = ({ ctx, kind, current, history, keys, maxMb }) => (
+  <Layout ctx={ctx} title={kind.title} active={`dataset-${kind.name}`}>
+    <PageHead
+      title={kind.title}
+      sub={`CyberDrive dataset cyberdrive:${kind.name}. Agents query it with read-only tools when their key is granted it.`}
+    />
+    <div class="stack">
+      {kind.about ? <p class="muted small">{kind.about}</p> : null}
+      <section class="card" aria-labelledby="ds-current">
+        <h2 id="ds-current">Current version</h2>
+        {current ? (
+          <dl class="kv">
+            <dt>Version</dt>
+            <dd>v{current.version}</dd>
+            <dt>{cap(kind.unit)}</dt>
+            <dd>
+              {current.rows.toLocaleString("en-US")}
+              {current.skipped ? <span class="muted"> ({current.skipped.toLocaleString("en-US")} skipped)</span> : null}
+            </dd>
+            <dt>Imported</dt>
+            <dd>
+              <Time iso={current.imported_at} abs /> <span class="muted">by {current.actor}</span>
+            </dd>
+            <dt>Source</dt>
+            <dd class="mono small">{current.source}</dd>
+            <dt>SHA-256</dt>
+            <dd>
+              <CopyField id="ds-sha" value={current.sha256} label="Copy SHA-256" />
+            </dd>
+          </dl>
+        ) : (
+          <p class="empty">Not imported yet. Upload a file or refresh from the source below.</p>
+        )}
+      </section>
+      <section class="card stack" aria-labelledby="ds-import">
+        <h2 id="ds-import">Import</h2>
+        <form method="post" action={`/datasets/${kind.name}/import`} enctype="multipart/form-data" class="stack">
+          <Csrf ctx={ctx} />
+          <div class="field">
+            <label for="ds-file">Upload {kind.fileHint}</label>
+            <input id="ds-file" type="file" name="file" required />
+            <span class="hint">Up to {maxMb} MB (DATASET_MAX_MB). The new version replaces the old one in one step.</span>
+          </div>
+          <div>
+            <button class="btn primary" type="submit">
+              <Icon.upload /> Import file
+            </button>
+          </div>
+        </form>
+        <hr />
+        <form
+          method="post"
+          action={`/datasets/${kind.name}/refresh`}
+          class="plain"
+          data-confirm={`Download ${kind.defaultUrl} and import it as a new version?`}
+        >
+          <Csrf ctx={ctx} />
+          <p class="muted small">
+            Source: <span class="mono">{kind.defaultUrl}</span>
+          </p>
+          <button class="btn" type="submit">
+            <Icon.download /> Refresh from source
+          </button>
+        </form>
+      </section>
+      <section class="card" aria-labelledby="ds-keys">
+        <h2 id="ds-keys">Keys with access</h2>
+        {keys.length ? (
+          <div class="row">
+            {keys.map((k) => (
+              <span class="badge">{k.name}</span>
+            ))}
+          </div>
+        ) : (
+          <p class="muted">
+            No key can query this dataset yet. Grant it on <a href="/keys">Agent keys</a>.
+          </p>
+        )}
+      </section>
+      <section class="card flush" aria-labelledby="ds-history">
+        <div class="card-head">
+          <h2 id="ds-history">Import history</h2>
+        </div>
+        {history.length === 0 ? (
+          <p class="empty">No imports yet.</p>
+        ) : (
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th scope="col">Version</th>
+                  <th scope="col">{cap(kind.unit)}</th>
+                  <th scope="col">Imported</th>
+                  <th scope="col" class="hide-sm">
+                    Source
+                  </th>
+                  <th scope="col" class="hide-sm">
+                    SHA-256
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {history.map((h) => (
+                  <tr>
+                    <td>v{h.version}</td>
+                    <td>{h.rows.toLocaleString("en-US")}</td>
+                    <td class="muted">
+                      <Time iso={h.imported_at} />
+                    </td>
+                    <td class="hide-sm mono small">{h.source}</td>
+                    <td class="hide-sm mono small" title={h.sha256}>
+                      {h.sha256.slice(0, 12)}…
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+    </div>
+  </Layout>
+);
 
 // ---------- share links ----------
 
@@ -1384,7 +1622,7 @@ export const SettingsPage: FC<{ ctx: PageCtx; dataDir: string; maxFileBytes: num
 
 // ---------- public share pages ----------
 
-const ShareShell: FC<PropsWithChildren<{ title: string }>> = ({ title, children }) => (
+export const ShareShell: FC<PropsWithChildren<{ title: string }>> = ({ title, children }) => (
   <html lang="en">
     <Head title={title} />
     <body>
@@ -1401,7 +1639,9 @@ export const SharePage: FC<{
   share: ShareRecord;
   rel: string;
   entries: Entry[];
-}> = ({ token, share, rel, entries }) => {
+  /** Published tables in this folder (read-only). */
+  tables?: Array<{ rel: string; name: string; title: string; version: number; rows: number }>;
+}> = ({ token, share, rel, entries, tables }) => {
   const base = (p: string) => (p === "/" ? `/s/${token}` : `/s/${token}?path=${q(p)}`);
   const title = share.label ?? nameOf(share.folder);
   return (
@@ -1471,6 +1711,28 @@ export const SharePage: FC<{
           </div>
         )}
       </section>
+      {tables?.length ? (
+        <section class="card flush" aria-labelledby="share-tables-h">
+          <div class="card-head">
+            <h2 id="share-tables-h">Tables</h2>
+          </div>
+          <ul class="table-links">
+            {tables.map((t) => (
+              <li>
+                <a href={`/s/${token}/table?path=${q(t.rel)}`}>
+                  <Icon.table /> {t.title}
+                </a>{" "}
+                <span class="muted small">
+                  v{t.version} · {t.rows} row{t.rows === 1 ? "" : "s"}
+                </span>{" "}
+                <a class="btn sm" href={`/s/${token}/table.csv?path=${q(t.rel)}`} aria-label={`Download ${t.title} as CSV`}>
+                  <Icon.download /> CSV
+                </a>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
     </ShareShell>
   );
 };

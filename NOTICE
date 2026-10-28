@@ -4,3 +4,7 @@ Copyright 2026 hkrlogic and Thumbdrive MCP contributors
 This product is licensed under the Apache License, Version 2.0 (see LICENSE).
 The Apache License does not grant permission to use the "Thumbdrive" name or
 logos, except as required to describe the origin of the work.
+
+This product includes Tabulator 6.7.1 (https://tabulator.info),
+Copyright (c) 2015-2026 Oli Folkerd, licensed under the MIT License
+(see src/web/static/vendor/tabulator/LICENSE and docs/third-party-licenses.md).

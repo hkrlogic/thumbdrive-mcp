@@ -18,7 +18,9 @@ async function main(): Promise<void> {
   }
   const drive = new Drive(config.dataDir, { maxFileBytes: config.maxFileBytes });
   const keys = new KeyStore(drive.db);
-  const { app, auth, close } = createApp({ drive, keys, config });
+  const { app, auth, datasets, close } = createApp({ drive, keys, config });
+  const stopRefresh = config.datasetAutoRefresh ? datasets.startAutoRefresh() : () => {};
+  if (config.datasetAutoRefresh) console.log("CyberDrive: monthly dataset auto-refresh is on (CYBERDRIVE_AUTO_REFRESH=1).");
   const envPassword = process.env.THUMBDRIVE_ADMIN_PASSWORD;
   if (envPassword) {
     await auth.applyEnvPassword(envPassword);
@@ -49,6 +51,7 @@ async function main(): Promise<void> {
     }
   });
   const shutdown = () => {
+    stopRefresh();
     server.close();
     void close().finally(() => {
       drive.close();

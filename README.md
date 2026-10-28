@@ -87,6 +87,10 @@ The UI is served at `/` on the same port as `/mcp`. See the [Web UI guide](docs/
 | Files | Browse; create, rename, move and delete folders; drag and drop files or whole folders to upload; download, rename, move and delete files; view a file's versions and restore any of them; restore deleted files |
 | Agent keys | Create a key for one or more folders. The key is shown once, with a copy button and snippets for Cursor, Claude Desktop (via `mcp-remote`), Claude Code and other clients that use the address you opened the UI on. Change a key's folders or revoke it |
 | Share links | Give a person read-only browser access to one folder: 1 hour, 1 day (default), 7 days or 30 days. Links are random 256-bit tokens stored as hashes. Revoke any time |
+| OUI database | CyberDrive: import or refresh the MAC vendor (OUI) database, see its version, rows, source and SHA-256, and which keys can query it. See [docs/cyberdrive.md](docs/cyberdrive.md) |
+| Windows events | CyberDrive: the same for Microsoft's Windows security audit events catalog |
+| NIST SP 800-53, NIST CSF 2.0, CSF ↔ 800-53 map | CyberDrive: the same for NIST's control catalogs and their mapping |
+| Tables | CyberDrive: create typed tables (blank, **Server inventory** or **IP plan / VLANs**), edit them in a spreadsheet-style grid, paste from Excel, import CSV/XLSX, publish versions with a note, roll back. See [docs/tables.md](docs/tables.md) |
 | Activity | Every agent read (key, tool, path, time), filterable by key, action and path; optionally your own changes and share-link downloads |
 | Settings | Change the admin password (signs out every other session) |
 
@@ -138,6 +142,37 @@ All four are annotated `readOnlyHint: true`. Anything outside the key's folders 
 
 Text views for Excel, PDF and Word files are not built yet: `format: "text"` says so, and `format: "raw"` returns them as base64.
 
+## CyberDrive
+
+CyberDrive adds read-only security reference datasets that agents query with cited answers: the MAC address vendor (OUI) database, Microsoft's Windows security audit events catalog, and NIST SP 800-53 Rev 5, CSF 2.0 and NIST's mapping between them.
+
+| Tool | What it does |
+| --- | --- |
+| `lookup_mac(macs)` | Up to 50 MACs or prefixes in any common format (`00:1A:2B:3C:4D:5E`, `00-1a-2b-...`, `001a.2b3c.4d5e`, `001A2B`). Longest-prefix match (MA-S 9, MA-M 7, then MA-L 6 nibbles); flags locally administered and multicast addresses; says `No match` explicitly. Each match has a citation such as `cyberdrive:oui@v3#00:00:0C` |
+| `search_oui_vendor(query, limit)` | Find prefixes by vendor name |
+| `lookup_windows_event(ids)` | Up to 50 Windows Security log event IDs: category > subcategory, summary, minimum OS and every version's detailed message, with a citation such as `cyberdrive:winevent@v1#4624`; explicit `No match` |
+| `search_windows_events(query, category, limit)` | Text search over summaries and messages, optionally within one audit category |
+| `lookup_control(ids)` | Up to 50 SP 800-53 or CSF 2.0 IDs (`AC-2`, `ac-2(1)`, `AC-2.1`, `PR.AA-01`, `GV.OC`): family or function, title, statement with parameters rendered, discussion, enhancements, related controls, withdrawn status, with a citation such as `cyberdrive:nist80053@v1#AC-2(1)`; explicit `No match` |
+| `search_controls(query, framework, family, include_withdrawn, limit)` | Keyword search over both frameworks, optionally one framework and family |
+| `map_control(ids)` | NIST's CSF 2.0 to SP 800-53 informative references, in both directions |
+
+The datasets are not bundled (the OUI data includes GPLv2 Wireshark and Nmap data; the Windows catalog is Microsoft's download; the NIST files are public domain but large and versioned). Import them from their pages in the web UI (upload, or **Refresh from source**) or with `npm run admin -- cyberdrive <dataset> import` (`oui`, `winevent`, `nist80053`, `csf2`, `csf2map`). The Windows catalog is Microsoft's 2016 list: it does not cover newer Windows 10/11 events or Sysmon. Keys get each dataset's tools only when you grant that dataset; a whole-drive key does not get it automatically. Every lookup is logged. Details, the access model, output format and license note: [docs/cyberdrive.md](docs/cyberdrive.md).
+
+### Tables
+
+Tables are your own typed data, such as a server inventory or an IP plan. A table lives at a folder path (`/inventory/servers`), so keys and share links that cover the folder cover the table. Edits go to a draft. **Publish** (with a note) creates version N, agents read only the latest published version, and **Roll back** republishes an old version in one click. Invalid IPs, MACs, CIDRs, CVE IDs, emails and the like are shown in red and block publishing.
+
+| Tool | What it does |
+| --- | --- |
+| `list_tables(path)` | Published tables you can see |
+| `describe_table(table)` | Columns, types, key column, row count, version |
+| `lookup_row(table, values)` | Up to 50 key values, normalized by type (hostnames case-insensitive, MACs in any format, IPs canonical). In a CIDR-keyed table an IP returns the containing range with the longest prefix. Citations like `cyberdrive:/inventory/servers@v3#r12`, explicit `No match` |
+| `query_table(table, filters, ...)` | Filters with `eq`, `neq`, `contains`, `starts_with`, `gt`, `lt`, `in` and `is_empty`, bound as parameters (no SQL from agents), with limit and paging |
+
+![Server inventory grid](docs/images/tables-grid-light.png)
+
+The grid uses Tabulator 6.7.1 (MIT), vendored and served by the app: see [docs/third-party-licenses.md](docs/third-party-licenses.md). Details: [docs/tables.md](docs/tables.md).
+
 ## Admin CLI
 
 Every command is described in [docs/configuration.md](docs/configuration.md#admin-cli).
@@ -148,7 +183,15 @@ npm run admin -- import <local-folder> <drive-folder>
 npm run admin -- mkdir | rm | ls | history <drive-path>
 npm run admin -- mv <drive-path> <new-drive-path>
 npm run admin -- restore <drive-path> <version>
-npm run admin -- key create <name> --folder <folder> [--folder ...]
+npm run admin -- key create <name> [--folder <folder> ...] [--dataset oui|winevent|nist80053|csf2|csf2map ...]
+npm run admin -- key datasets <name> [dataset ...]
+npm run admin -- cyberdrive oui import [path-or-url] | status
+npm run admin -- cyberdrive oui lookup <mac> ... | search <vendor>
+npm run admin -- cyberdrive winevent import [path-or-url] | status
+npm run admin -- cyberdrive winevent lookup <id> ... | search [text] [--category <category>]
+npm run admin -- cyberdrive nist80053|csf2|csf2map import [path-or-url] | status
+npm run admin -- cyberdrive nist80053|csf2 lookup <id> ... | search [text] [--family <family>] [--withdrawn]
+npm run admin -- cyberdrive csf2map map <id> ...
 npm run admin -- key list | key revoke <name>
 npm run admin -- activity [count]
 npm run admin -- set-password         # prompts, or reads the first line of stdin
@@ -161,7 +204,7 @@ data/
   files/        current files, as plain files
   versions/     every stored version, named by SHA-256
   thumbdrive.db versions, hashed keys and share links, admin password hash,
-                sessions, activity log (SQLite)
+                sessions, activity log, CyberDrive datasets (SQLite)
 ```
 
 Every admin change adds a version; deletes keep history. Files you copy into `data/files` by hand are served too, and get their first version on the next admin change. Symlinks inside the drive are ignored.
@@ -178,6 +221,8 @@ The main settings are below. [docs/configuration.md](docs/configuration.md) list
 | `ALLOWED_HOSTS` | | Host names accepted in `Host`/`Origin` besides localhost and private IPs, comma separated (e.g. `nas.local`) |
 | `ALLOW_INSECURE_HTTP` | | `1` accepts plain HTTP from public addresses. Not recommended |
 | `MAX_FILE_MB` | `50` | Largest file the admin can store or upload |
+| `DATASET_MAX_MB` | `100` | Largest CyberDrive dataset file (upload, download or CLI import) |
+| `CYBERDRIVE_AUTO_REFRESH` | | `1` re-downloads imported datasets from their source when older than 30 days. Off by default |
 | `READ_PAGE_BYTES` | `65536` | Bytes per read page |
 | `READ_PAGE_ROWS` | `200` | Rows per CSV page |
 | `RATE_LIMIT_PER_MINUTE` | `120` | Requests per key per minute |

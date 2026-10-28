@@ -111,6 +111,14 @@ The person sees a plain, read-only page with the folder's files and subfolders. 
 
 A link only opens its own folder. It cannot reach anything above or beside it.
 
+## Tables
+
+**Tables** lists your tables with their folder, latest version and whether the draft has unpublished changes. **New table** starts blank or from a template, and **Import** takes a CSV or XLSX file. Open a table to edit it in the grid, then **Review and publish** to make the draft the next version that agents see. **Versions** has the history and rollback. See [Tables](tables.md).
+
+![Tables list](images/tables-list-light.png)
+
+![Publish summary](images/tables-publish-diff-light.png)
+
 ## Activity
 
 ![The activity log with filters](images/activity.png)

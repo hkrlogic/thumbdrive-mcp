@@ -12,7 +12,7 @@ export const APP_CSS = `
 :root{
   --bg:#f6f7fb;--surface:#fff;--surface-2:#f1f3f9;--border:#e3e6ef;--text:#151826;--muted:#5d6479;
   --accent:#4f46e5;--accent-2:#4338ca;--accent-soft:#eef0ff;--on-accent:#fff;
-  --danger:#c62828;--danger-soft:#fdecec;--ok:#1b7f4c;--ok-soft:#e6f6ee;--warn:#9a6700;--warn-soft:#fff6db;
+  --danger:#c62828;--danger-soft:#fdecec;--ok:#166b3f;--ok-soft:#e6f6ee;--warn:#9a6700;--warn-soft:#fff6db;
   --radius:12px;--shadow:0 1px 2px rgba(16,24,40,.05),0 1px 3px rgba(16,24,40,.06);
   --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
   color-scheme:light;

@@ -3,70 +3,23 @@
  * cookies are kept per "browser", forms post their CSRF token.
  */
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { after, test } from "node:test";
 import { serve } from "@hono/node-server";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
-import type { Hono } from "hono";
 import { createApp } from "../src/http/app.ts";
 import type { Drive } from "../src/storage/drive.ts";
 import { hashPassword, verifyPasswordHash } from "../src/web/auth.ts";
 import { ShareStore } from "../src/web/shares.ts";
 import { connectionSnippets } from "../src/web/snippets.ts";
+import { Browser, PASSWORD, signedIn } from "./browser.ts";
 import { keysFor, tempDrive, testConfig, text } from "./helpers.ts";
-
-const PASSWORD = "correct horse battery";
-
-/** A minimal browser: a cookie jar, Host header, and helpers to post forms with the page's CSRF token. */
-class Browser {
-  cookies = new Map<string, string>();
-  lastSetCookies: string[] = [];
-  constructor(
-    private readonly app: Hono,
-    private readonly host = "localhost:8484",
-  ) {}
-
-  async fetch(pathname: string, init: { method?: string; body?: BodyInit; headers?: Record<string, string> } = {}) {
-    const headers: Record<string, string> = { host: this.host, ...init.headers };
-    if (this.cookies.size) headers.cookie = [...this.cookies].map(([k, v]) => `${k}=${v}`).join("; ");
-    const res = await this.app.request(`http://${this.host}${pathname}`, { method: init.method ?? "GET", headers, body: init.body });
-    this.lastSetCookies = res.headers.getSetCookie();
-    for (const line of this.lastSetCookies) {
-      const [pair] = line.split(";");
-      const eq = pair.indexOf("=");
-      const name = pair.slice(0, eq).trim();
-      const value = pair.slice(eq + 1).trim();
-      if (!value || /max-age=0/i.test(line)) this.cookies.delete(name);
-      else this.cookies.set(name, value);
-    }
-    return res;
-  }
-
-  async page(pathname: string): Promise<{ status: number; html: string; csrf: string; res: Response }> {
-    const res = await this.fetch(pathname);
-    const html = await res.text();
-    return { status: res.status, html, csrf: html.match(/<meta name="csrf" content="([^"]+)"/)?.[1] ?? "", res };
-  }
-
-  /** Load `from` for a CSRF token (unless given), then POST the form to `to`. */
-  async post(
-    to: string,
-    fields: Record<string, string | string[] | Blob>,
-    opts: { csrf?: string | null; from?: string; headers?: Record<string, string>; files?: Array<[string, Blob, string]> } = {},
-  ) {
-    const csrf = opts.csrf === undefined ? (await this.page(opts.from ?? "/")).csrf : opts.csrf;
-    const form = new FormData();
-    if (csrf !== null) form.set("_csrf", csrf);
-    for (const [k, v] of Object.entries(fields)) {
-      for (const item of Array.isArray(v) ? v : [v]) form.append(k, item);
-    }
-    for (const [k, blob, name] of opts.files ?? []) form.append(k, blob, name);
-    return this.fetch(to, { method: "POST", body: form, headers: opts.headers });
-  }
-}
+import { csf2Catalog, csf2MapWorkbook, sp80053Catalog } from "./fixtures/controls.ts";
+import { xlsx } from "./xlsx.ts";
 
 function setup(options: { maxFileBytes?: number } = {}) {
   const drive = tempDrive(options);
@@ -75,14 +28,6 @@ function setup(options: { maxFileBytes?: number } = {}) {
   const created = createApp({ drive, keys, config });
   after(() => created.close());
   return { drive, keys, config, ...created, shares: new ShareStore(drive.db) };
-}
-
-async function signedIn(app: Hono): Promise<Browser> {
-  const b = new Browser(app);
-  const setupPage = await b.page("/setup");
-  const res = await b.post("/setup", { password: PASSWORD, confirm: PASSWORD }, { csrf: setupPage.csrf });
-  assert.equal(res.status, 303, "setup should succeed");
-  return b;
 }
 
 const flashOf = async (b: Browser, location: string | null) => (await b.page(location ?? "/")).html;
@@ -635,4 +580,131 @@ test("connection snippets use the real URL and add --allow-http only for plain H
   assert.ok(!JSON.parse(find("https://drive.example.com/mcp", "claude")).mcpServers.thumbdrive.args.includes("--allow-http"));
   const cursor = JSON.parse(find("https://drive.example.com/mcp", "cursor"));
   assert.deepEqual(cursor.mcpServers.thumbdrive, { url: "https://drive.example.com/mcp", headers: { Authorization: "Bearer td_abc" } });
+});
+
+// ---------- CyberDrive datasets ----------
+
+function ouiFixture(rows: Array<[string, string]>): Blob {
+  const dir = mkdtempSync(path.join(tmpdir(), "oui-fx-"));
+  after(() => rmSync(dir, { recursive: true, force: true }));
+  const file = path.join(dir, "master_oui.db");
+  const db = new DatabaseSync(file);
+  const cols = "oui, manufacturer, registry, short_name, device_type, registered_date, address, sources, status, deregistered_date";
+  db.exec(`CREATE TABLE oui_registry (${cols.split(", ").map((c) => `${c} TEXT`).join(", ")})`);
+  const insert = db.prepare("INSERT INTO oui_registry (oui, manufacturer, registry, status) VALUES (?, ?, 'MA-L', 'current')");
+  for (const [oui, m] of rows) insert.run(oui, m);
+  db.close();
+  return new Blob([readFileSync(file)]);
+}
+
+test("OUI database page: upload imports a new version, bad files are rejected, CSRF is required", async () => {
+  const { app, datasets } = setup();
+  const b = await signedIn(app);
+  const empty = await b.page("/datasets/oui");
+  assert.equal(empty.status, 200);
+  assert.match(empty.html, /Not imported yet/);
+  assert.match(empty.html, /Refresh from source/);
+  assert.match(empty.html, /href="\/datasets\/oui"/, "nav links the page");
+
+  const up = await b.post("/datasets/oui/import", {}, { from: "/datasets/oui", files: [["file", ouiFixture([["00:00:0C", "Cisco"]]), "master_oui.db"]] });
+  assert.equal(up.status, 303);
+  const after1 = await flashOf(b, up.headers.get("location"));
+  assert.match(after1, /Imported version 1: 1 rows/);
+  assert.match(after1, /upload:master_oui.db/);
+  assert.equal(datasets.current("oui")?.version, 1);
+
+  const bad = await b.post("/datasets/oui/import", {}, { from: "/datasets/oui", files: [["file", new Blob([text("nope")]), "x.db"]] });
+  assert.match(await flashOf(b, bad.headers.get("location")), /Not a SQLite database file/);
+  assert.equal(datasets.current("oui")?.version, 1);
+
+  const forged = await b.post("/datasets/oui/import", {}, { csrf: "forged", files: [["file", ouiFixture([["00:00:0C", "X"]]), "a.db"]] });
+  assert.equal(forged.status, 403);
+  assert.equal((await b.fetch("/datasets/nope")).status, 404);
+});
+
+test("Windows events page imports the Microsoft workbook and counts events", async () => {
+  const { app, datasets, keys } = setup();
+  const b = await signedIn(app);
+  const empty = await b.page("/datasets/winevent");
+  assert.equal(empty.status, 200);
+  assert.match(empty.html, /Not imported yet/);
+  assert.match(empty.html, /Refresh from source/);
+  assert.match(empty.html, /href="\/datasets\/winevent"/);
+  const book = xlsx({
+    "Security Audit Events": [
+      ["Category", "Subcategory", "Event ID", "Message Summary", "Minimum Operating System Requirement"],
+      ["Logon/Logoff", "Logon", 4624, "An account was successfully logged on.", "Windows Vista"],
+    ],
+    "Complete Event Messages": [
+      ["Event ID", "Version", "Detailed Message", "Minimum Operating System Requirement"],
+      [4624, 0, "An account was successfully logged on.", "Windows Vista"],
+    ],
+  });
+  const up = await b.post("/datasets/winevent/import", {}, { from: "/datasets/winevent", files: [["file", new Blob([new Uint8Array(book)]), "WindowsSecurityAuditEvents.xlsx"]] });
+  assert.equal(up.status, 303);
+  assert.match(await flashOf(b, up.headers.get("location")), /Imported version 1: 1 events/);
+  assert.equal(datasets.current("winevent")?.rows, 1);
+  const bad = await b.post("/datasets/winevent/import", {}, { from: "/datasets/winevent", files: [["file", new Blob([text("nope")]), "x.xlsx"]] });
+  assert.match(await flashOf(b, bad.headers.get("location")), /xlsx/i);
+  const page = await b.page("/keys");
+  assert.match(page.html, /name="datasets" value="winevent"/);
+  await b.post("/keys", { name: "win-agent", datasets: "winevent" }, { from: "/keys" });
+  assert.deepEqual(keys.list().find((k) => k.name === "win-agent")?.datasets, ["winevent"]);
+});
+
+test("NIST pages import the OSCAL catalogs and the CSF mapping workbook", async () => {
+  const { app, datasets, keys } = setup();
+  const b = await signedIn(app);
+  for (const name of ["nist80053", "csf2", "csf2map"]) {
+    const empty = await b.page(`/datasets/${name}`);
+    assert.equal(empty.status, 200, name);
+    assert.match(empty.html, /Not imported yet/);
+    assert.match(empty.html, new RegExp(`href="/datasets/${name}"`));
+  }
+  assert.match((await b.page("/datasets/nist80053")).html, /raw\.githubusercontent\.com\/usnistgov\/oscal-content/);
+  const files: Array<[string, Uint8Array, string, RegExp]> = [
+    ["nist80053", sp80053Catalog(), "NIST_SP-800-53_rev5_catalog.json", /Imported version 1: 7 controls/],
+    ["csf2", csf2Catalog(), "NIST_CSF_v2.0_catalog.json", /Imported version 1: 10 items/],
+    ["csf2map", csf2MapWorkbook(), "csf2.xlsx", /Imported version 1: 7 mappings/],
+  ];
+  for (const [name, bytes, file, flash] of files) {
+    const up = await b.post(`/datasets/${name}/import`, {}, { from: `/datasets/${name}`, files: [["file", new Blob([new Uint8Array(bytes)]), file]] });
+    assert.equal(up.status, 303);
+    assert.match(await flashOf(b, up.headers.get("location")), flash);
+  }
+  const bad = await b.post("/datasets/csf2/import", {}, { from: "/datasets/csf2", files: [["file", new Blob([new Uint8Array(sp80053Catalog())]), "x.json"]] });
+  assert.match(await flashOf(b, bad.headers.get("location")), /Not a CSF 2\.0 catalog/);
+  assert.equal(datasets.current("csf2")?.version, 1);
+  const page = await b.page("/keys");
+  assert.match(page.html, /name="datasets" value="nist80053"/);
+  await b.post("/keys", { name: "grc-agent", datasets: ["nist80053", "csf2map"] }, { from: "/keys" });
+  assert.deepEqual(keys.list().find((k) => k.name === "grc-agent")?.datasets, ["csf2map", "nist80053"]);
+});
+
+test("dataset uploads have their own size limit", async () => {
+  const drive = tempDrive();
+  const keys = keysFor(drive);
+  const { app, close } = createApp({ drive, keys, config: testConfig(drive, { datasetMaxBytes: 4096 }) });
+  after(() => close());
+  const b = await signedIn(app);
+  const res = await b.post("/datasets/oui/import", {}, { from: "/datasets/oui", files: [["file", new Blob([new Uint8Array(64 * 1024 + 2 * 1024 * 1024)]), "big.db"]] });
+  assert.equal(res.status, 413);
+  assert.match(await res.text(), /DATASET_MAX_MB/);
+});
+
+test("keys page grants datasets, and the grant reaches MCP", async () => {
+  const { app, keys } = setup();
+  const b = await signedIn(app);
+  const page = await b.page("/keys");
+  assert.match(page.html, /name="datasets" value="oui"/);
+  const res = await b.post("/keys", { name: "cyber-agent", datasets: "oui" }, { from: "/keys" });
+  assert.equal(res.status, 200);
+  const html = await res.text();
+  assert.match(html, /cyberdrive:oui/);
+  const record = keys.list().find((k) => k.name === "cyber-agent");
+  assert.deepEqual(record?.datasets, ["oui"]);
+  assert.deepEqual(record?.folders, []);
+  const edit = await b.post(`/keys/${record?.id}/folders`, { folders: "/" }, { from: "/keys" });
+  assert.equal(edit.status, 303);
+  assert.deepEqual(keys.get(record?.id ?? 0)?.datasets, [], "unchecked datasets are removed");
 });
