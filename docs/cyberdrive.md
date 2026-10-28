@@ -2,12 +2,15 @@
 
 CyberDrive is the security side of Thumbdrive: reference datasets that agents can query through read-only MCP tools, next to the files in the drive. Each answer carries a citation, so an agent can show where a fact came from instead of guessing.
 
-There are two datasets: the **MAC address vendor (OUI) database** and the **Windows security audit events catalog**.
+The datasets are the **MAC address vendor (OUI) database**, the **Windows security audit events catalog**, and the **NIST control frameworks** (SP 800-53 Rev 5, CSF 2.0 and NIST's mapping between them).
 
 | Dataset | Tools | Citation |
 | --- | --- | --- |
 | `oui`: IEEE MA-L, MA-M and MA-S assignments, merged with Wireshark and Nmap names | `lookup_mac`, `search_oui_vendor` | `cyberdrive:oui@v3#00:00:0C` |
 | `winevent`: Microsoft's Windows Security Audit Events catalog (2016): category, subcategory, summary, minimum OS and every version of the detailed message | `lookup_windows_event`, `search_windows_events` | `cyberdrive:winevent@v1#4624` |
+| `nist80053`: NIST SP 800-53 Rev 5 controls and enhancements (OSCAL) | `lookup_control`, `search_controls` | `cyberdrive:nist80053@v1#AC-2(1)` |
+| `csf2`: NIST Cybersecurity Framework 2.0 functions, categories and subcategories (OSCAL) | `lookup_control`, `search_controls` | `cyberdrive:csf2@v1#PR.AA-01` |
+| `csf2map`: NIST's CSF 2.0 informative references to SP 800-53 | `map_control` | |
 
 Datasets are **not** shipped with Thumbdrive. You import them (see [License](#license)).
 
@@ -60,8 +63,8 @@ Set `CYBERDRIVE_AUTO_REFRESH=1`. The server then checks every 6 hours and downlo
 
 Dataset access is a separate, explicit grant on an agent key, alongside its folders:
 
-- On **Agent keys**, tick **OUI database** (`cyberdrive:oui`) and/or **Windows security events** (`cyberdrive:winevent`) when you create a key, or change it later with **Save access**.
-- In the CLI, add `--dataset oui` or `--dataset winevent` (repeatable) to `key create`, or use `key datasets <name> oui winevent` (`key datasets <name>` with no dataset removes the grants, unless the key has no folders).
+- On **Agent keys**, tick the datasets (**OUI database** `cyberdrive:oui`, **Windows security events** `cyberdrive:winevent`, **NIST SP 800-53** `cyberdrive:nist80053`, **NIST CSF 2.0** `cyberdrive:csf2`, **CSF 2.0 to SP 800-53 map** `cyberdrive:csf2map`) when you create a key, or change them later with **Save access**.
+- In the CLI, add `--dataset <name>` (repeatable: `oui`, `winevent`, `nist80053`, `csf2`, `csf2map`) to `key create`, or use `key datasets <name> oui winevent nist80053 ...` (`key datasets <name>` with no dataset removes the grants, unless the key has no folders).
 
 Each dataset is granted separately: a key with only `oui` does not see the Windows event tools, and the other way round.
 
@@ -70,7 +73,7 @@ Rules:
 - A whole-drive key (`/`) does **not** get datasets automatically. Grant them on purpose.
 - A key can be dataset-only, with no folders. It then sees only the dataset tools.
 - A key without the grant does not see that dataset's tools in its tool list.
-- Every lookup and search is written to **Activity** with the key name, the tool name, the path (`cyberdrive:oui` or `cyberdrive:winevent`) and the result for each input, such as `v3 2 MAC(s): 00:00:0C:12:34:56=00:00:0C, 02:00:00:00:00:01=locally administered` or `v1 2 event(s): 4624=Logon, 9999=No match`.
+- Every lookup and search is written to **Activity** with the key name, the tool name, the path (such as `cyberdrive:oui` or `cyberdrive:winevent`) and the result for each input, such as `v3 2 MAC(s): 00:00:0C:12:34:56=00:00:0C, 02:00:00:00:00:01=locally administered` or `v1 2 event(s): 4624=Logon, 9999=No match`.
 
 ## OUI tools
 
@@ -244,6 +247,138 @@ This tool runs a case-insensitive text search over summaries, subcategories and 
 
 The tool returns `total` (all matches) and up to `limit` results. Each result has the ID, category, subcategory, summary, minimum OS, number of versions and citation. Use `lookup_windows_event` to get the full messages.
 
+## NIST control frameworks
+
+Three datasets hold NIST's security control frameworks:
+
+| Dataset | Content | Default source |
+| --- | --- | --- |
+| `nist80053` | NIST SP 800-53 Rev 5 controls and enhancements (the current file is release 5.2.0: 20 families, 1,196 controls and enhancements, withdrawn ones included) | NIST's OSCAL catalog JSON in [usnistgov/oscal-content](https://github.com/usnistgov/oscal-content): `https://raw.githubusercontent.com/usnistgov/oscal-content/main/nist.gov/SP800-53/rev5/json/NIST_SP-800-53_rev5_catalog.json` (about 10 MB) |
+| `csf2` | NIST Cybersecurity Framework 2.0: 6 functions, 34 categories and 185 subcategories (225 items, withdrawn ones included; 324 controls and 872 enhancements on the 800-53 side), with the implementation examples | NIST's OSCAL catalog JSON: `https://raw.githubusercontent.com/usnistgov/oscal-content/main/nist.gov/CSF/v2.0/json/NIST_CSF_v2.0_catalog.json` |
+| `csf2map` | NIST's CSF 2.0 informative references to SP 800-53 (746 mappings in the current export) | The CSF 2.0 Reference Tool export, `https://csrc.nist.gov/extensions/nudp/services/json/csf/download?olirids=all` (an `.xlsx`, about 145 KB) |
+
+All three are US government works, in the public domain in the US, so **Refresh from source** downloads them straight from NIST. They are still not committed to the repository or bundled in the image.
+
+### Import
+
+- **Web UI.** Open **NIST SP 800-53**, **NIST CSF 2.0** and **CSF ↔ 800-53 map** in the sidebar (`/datasets/nist80053`, `/datasets/csf2`, `/datasets/csf2map`). Select **Refresh from source**, or upload a copy under **Import a file**.
+- **CLI.**
+
+  ```sh
+  npm run admin -- cyberdrive nist80053 import            # download from NIST
+  npm run admin -- cyberdrive csf2 import
+  npm run admin -- cyberdrive csf2map import
+  npm run admin -- cyberdrive nist80053 import ./NIST_SP-800-53_rev5_catalog.json
+  npm run admin -- cyberdrive nist80053 lookup AC-2 'ia-2(1)' AC-2.1
+  npm run admin -- cyberdrive csf2 lookup PR.AA-01 GV.OC
+  npm run admin -- cyberdrive nist80053 search "multi-factor" --family IA
+  npm run admin -- cyberdrive csf2 search --family GV       # every GOVERN item
+  npm run admin -- cyberdrive nist80053 search audit --withdrawn
+  npm run admin -- cyberdrive csf2map map PR.AA-01 'AC-2(1)'
+  npm run admin -- cyberdrive csf2map status
+  ```
+
+Each import validates the file and refuses anything else with a reason (for example `Not an SP 800-53 catalog: expected groups of class "family" holding controls of class "SP800-53"` or `Not a CSF 2.0 catalog`), then replaces that dataset in one transaction and adds a history row, like the other datasets. Importing a newer 800-53 release (for example 5.1.1 to 5.2.0) is a new version; the framework title, such as "NIST SP 800-53 Rev 5.2.0", comes from the catalog's metadata.
+
+How the files are read:
+
+- **SP 800-53.** Families, controls and enhancements come from the OSCAL groups and controls. Statements are rendered as indented items (`a.`, `  1.`), with OSCAL parameters written inline the way NIST prints them: `[Assignment: organization-defined personnel or roles]`, `[Selection (one or more): ...]`. Related controls come from `related` links, and withdrawn controls keep their `incorporated-into` and `moved-to` targets.
+- **CSF 2.0.** The OSCAL catalog titles each subcategory with its own ID, so the outcome statement is used as the title. Implementation examples are numbered `Ex1`, `Ex2` and so on, and the first-party/third-party risk note on each subcategory is kept as `risk_party`.
+- **CSF map.** The workbook's sheet with **Subcategory** and **Informative References** columns is read. Only `SP 800-53 Rev 5...` references are imported, and only the newest 800-53 revision in the file (the current export carries 5.2.0). References to other frameworks are ignored: they are third-party works with their own licenses. Category rows are kept too (for example GV.OC has its own references).
+
+### Where the mapping comes from
+
+NIST publishes the CSF 2.0 to SP 800-53 mapping in its [Online Informative References (OLIR)](https://csrc.nist.gov/projects/olir) program as entry *CSFv2.0-to-SP-800-53-Rev-5-2-0* (final, November 2025), and the same references appear in the CSF 2.0 Reference Tool. The importer uses the Reference Tool's `.xlsx` export because it is the machine-readable form NIST serves from a stable public URL; the OLIR catalog has no public download API, and the CPRT JSON export maps only to whole 800-53 families. Two things to know about this export:
+
+- Its Introduction sheet calls it "a user generated version of the Core versus an official NIST publication". The rows are NIST's informative references, but the file is generated on request.
+- It records the download time, so its SHA-256 changes on every download even when the content does not. Each **Refresh from source**, including `CYBERDRIVE_AUTO_REFRESH`, therefore makes a new version.
+
+The mappings say which SP 800-53 controls *support* a CSF outcome. They are not equivalences, and the tool says so.
+
+### `lookup_control(ids)`
+
+`ids` is a list of 1 to 50 IDs from either framework, in any common spelling: `AC-2`, `ac-2`, `AC-02`, `AC-2(1)`, `ac-2(1)`, `AC-2.1`, `AC-2 (1)`, `NIST SP 800-53 Rev 5: AC-2`, a family such as `AC`, and `PR.AA-01`, `pr.aa-1`, `GV.OC` or `GV`. Each result's `result` is one of:
+
+| `result` | Meaning |
+| --- | --- |
+| `match` | `framework`, `framework_title`, `id`, `kind` (`family`, `control`, `enhancement`, `function`, `category`, `subcategory`), `family` (800-53 family or CSF function, with title), `parent`, `title`, `statement`, `guidance` (800-53 discussion), `enhancements` or `children`, `related`, `implementation_examples` (CSF), `risk_party` (CSF), `withdrawn`, `withdrawn_to` and a `citation` |
+| `No match` | A valid ID that is not in the imported catalog, or a framework that has not been imported or granted to this key (the note says which) |
+| `invalid` | Not an SP 800-53 or CSF 2.0 ID |
+
+The citation is `cyberdrive:<dataset>@v<version>#<id>`, such as `cyberdrive:nist80053@v1#AC-2(1)` or `cyberdrive:csf2@v1#PR.AA-01`.
+
+Real output (trimmed), for `["IA-2(1)", "AC-13"]`:
+
+```json
+{
+  "frameworks": [
+    { "dataset": "nist80053", "version": 1, "title": "NIST SP 800-53 Rev 5.2.0" },
+    { "dataset": "csf2", "version": 1, "title": "NIST CSF 2.0" }
+  ],
+  "results": [
+    {
+      "input": "IA-2(1)",
+      "result": "match",
+      "framework": "nist80053",
+      "id": "IA-2(1)",
+      "kind": "enhancement",
+      "family": { "id": "IA", "title": "Identification and Authentication" },
+      "parent": { "id": "IA-2", "title": "Identification and Authentication (Organizational Users)" },
+      "title": "Multi-factor Authentication to Privileged Accounts",
+      "statement": "Implement multi-factor authentication for access to privileged accounts.",
+      "guidance": "Multi-factor authentication requires the use of two or more different factors to achieve authentication. ...",
+      "related": ["AC-5", "AC-6"],
+      "withdrawn": false,
+      "citation": "cyberdrive:nist80053@v1#IA-2(1)"
+    },
+    {
+      "input": "AC-13",
+      "result": "match",
+      "id": "AC-13",
+      "title": "Supervision and Review — Access Control",
+      "statement": null,
+      "withdrawn": true,
+      "withdrawn_to": [{ "rel": "incorporated into", "id": "AC-2" }, { "rel": "incorporated into", "id": "AU-6" }],
+      "citation": "cyberdrive:nist80053@v1#AC-13",
+      "note": "Withdrawn: incorporated into AC-2, AU-6. Use the replacement instead."
+    }
+  ]
+}
+```
+
+AC-2's statement comes out like this:
+
+```text
+a. Define and document the types of accounts allowed and specifically prohibited for use within the system;
+b. Assign account managers;
+c. Require [Assignment: organization-defined prerequisites and criteria] for group and role membership;
+d. Specify:
+  1. Authorized users of the system;
+  2. Group and role membership; and
+  ...
+```
+
+### `search_controls(query, framework, family, include_withdrawn, limit)`
+
+Case-insensitive text search over IDs, titles, statements, guidance and CSF implementation examples. Hits are ranked by ID match, then title, then text. `framework` limits the search to `nist80053` or `csf2`, and `family` to one 800-53 family or CSF function (`IA`, `Access Control`, `PR`). With only `family`, it lists that family. Families and functions themselves are not returned (use `lookup_control`), and withdrawn items are left out unless `include_withdrawn` is true. `limit` is 1 to 100 (default 20). Each hit has the ID, kind, family, title, a snippet and a citation, and the answer includes the `total`.
+
+### `map_control(ids)`
+
+Needs the `csf2map` grant. `ids` is 1 to 50 IDs from either side:
+
+- **CSF to SP 800-53.** A subcategory gives its references. A category gives its own references plus every subcategory's, marked `"via": "subcategory PR.AA-01"`; a function rolls up the same way.
+- **SP 800-53 to CSF.** A control gives the CSF items that cite it. An enhancement also gives the items that cite its base control (`"via": "base control AC-2"`), and any control gives the items that cite its whole family (`"via": "whole family IR"`). Direct matches come first.
+
+Titles are filled in only from catalogs the key is granted and that have been imported. With real data, PR.AA-01 maps to 14 controls (AC-1, AC-2, AC-14, IA-1 to IA-11), and AC-2(1) maps through AC-2 to PR.AA-01, PR.AA-05, PR.DS-10, DE.CM-01 and DE.CM-03. A withdrawn CSF item such as ID.AM-06 has no references and answers `No match`.
+
+### Grants and activity
+
+The three datasets are granted separately, like the others: a key with `nist80053` alone gets `lookup_control` and `search_controls` for SP 800-53 only, and CSF IDs answer `No match` with a note that CSF 2.0 is not available to the key. `map_control` appears only with `csf2map`. Activity records each call with the path `cyberdrive:nist80053+csf2` (the frameworks the key can see) or `cyberdrive:csf2map`, and a result per ID.
+
+### CIS Controls v8.1 (planned, user import only)
+
+CIS Controls are licensed CC BY-NC-ND 4.0, which forbids redistributing modified copies, so Thumbdrive will never bundle or download them. The storage is ready for a user-supplied import: controls from every framework share one table keyed by framework and ID, and each framework is one entry in `CONTROL_FRAMEWORKS` (`src/cyberdrive/controls.ts`) with an ID parser. Adding CIS means a parser for CIS's spreadsheet, a `cis8` entry with IDs like `5.4`, and a dataset kind without a default URL, so the user uploads their own licensed copy. It is not built yet.
+
 ## Use it from an agent
 
 Create a key with the dataset grants you want, then use the snippet shown on the **Agent keys** page. For Cursor (`~/.cursor/mcp.json`):
@@ -265,10 +400,12 @@ For Claude Code:
 claude mcp add --transport http thumbdrive https://drive.example.com/mcp --header "Authorization: Bearer td_..."
 ```
 
-Then ask, for example: "Which vendors are behind these MACs from the DHCP log: 00:00:0c:12:34:56, 8c1f.64af.a000, 02:00:00:00:00:01? Cite each one." Or: "What do event IDs 4624, 4672 and 4688 mean, and which audit subcategory must be on to get them?" The server's instructions tell the agent to quote the citation and to say "No match" or "locally administered" instead of guessing.
+Then ask, for example: "Which vendors are behind these MACs from the DHCP log: 00:00:0c:12:34:56, 8c1f.64af.a000, 02:00:00:00:00:01? Cite each one." Or: "What do event IDs 4624, 4672 and 4688 mean, and which audit subcategory must be on to get them?" Or: "Quote AC-2(1) and IA-2(1), and which CSF 2.0 outcomes do they support?" The server's instructions tell the agent to quote the citation and to say "No match" or "locally administered" instead of guessing.
 
 ## License
 
 Thumbdrive's code is under the Apache License 2.0. The OUI database is a separate work: the Ringmast4r OUI-Master-Database project is MIT-licensed, but it merges data from Wireshark's `manuf` file and Nmap's `nmap-mac-prefixes`, which are distributed under the GPLv2 (plus IEEE registry data). For that reason the dataset is **not committed to this repository or included in the image**. Each user downloads it into their own drive, and should check the source project's terms before redistributing it.
 
 The Windows security events catalog is published by Microsoft on the Microsoft Download Center under Microsoft's terms. It is also **not committed or bundled**. Each user downloads it from Microsoft, through **Refresh from source** or the CLI. The test suite uses small synthetic workbooks that it builds in memory.
+
+NIST SP 800-53, CSF 2.0 and the CSF 2.0 Reference Tool data are works of the US government, not subject to copyright in the US. They are still not committed or bundled; **Refresh from source** downloads them from NIST, and the tests use small look-alike fixtures. Only the SP 800-53 references are imported from the Reference Tool export, because its other references point to third-party frameworks under their own terms. CIS Controls (CC BY-NC-ND 4.0) will only ever be a user import.

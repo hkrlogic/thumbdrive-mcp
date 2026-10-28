@@ -117,8 +117,8 @@ Drive paths start with `/`, such as `/team/handbook.pdf`.
 
 | Command | What it does |
 | --- | --- |
-| `key create <name> [--folder <drive-folder> ...] [--dataset oui\|winevent ...]` | Create a read-only key for one or more folders (use `--folder /` for the whole drive) and/or CyberDrive datasets. A key needs at least one of them. The key is printed **once**; only its hash is stored. |
-| `key datasets <name> [dataset ...]` | Set the CyberDrive datasets a key can query (`oui`, `winevent`). With no dataset, removes them (a key with no folders must keep one). |
+| `key create <name> [--folder <drive-folder> ...] [--dataset oui\|winevent\|nist80053\|csf2\|csf2map ...]` | Create a read-only key for one or more folders (use `--folder /` for the whole drive) and/or CyberDrive datasets. A key needs at least one of them. The key is printed **once**; only its hash is stored. |
+| `key datasets <name> [dataset ...]` | Set the CyberDrive datasets a key can query (`oui`, `winevent`, `nist80053`, `csf2`, `csf2map`). With no dataset, removes them (a key with no folders must keep one). |
 | `key list` | List keys: name, prefix, folders, and last use or revocation time. |
 | `key revoke <name>` | Turn a key off at once. |
 
@@ -136,6 +136,11 @@ To change a key's folders or datasets without changing the key, use **Edit** on 
 | `cyberdrive winevent status` | Every import of the Windows events catalog. |
 | `cyberdrive winevent lookup <id> [id ...]` | The `lookup_windows_event` result as JSON. |
 | `cyberdrive winevent search [text] [--category <category>]` | The `search_windows_events` result as JSON. |
+| `cyberdrive nist80053 import [path-or-url]`, `cyberdrive csf2 import [...]`, `cyberdrive csf2map import [...]` | Validate and import NIST's SP 800-53 Rev 5 OSCAL catalog, the CSF 2.0 OSCAL catalog or the CSF 2.0 Reference Tool export as the next version. With no argument, downloads it from NIST. |
+| `cyberdrive nist80053\|csf2\|csf2map status` | Every import of that dataset. |
+| `cyberdrive nist80053\|csf2 lookup <id> [id ...]` | The `lookup_control` result as JSON, for that framework. |
+| `cyberdrive nist80053\|csf2 search [text] [--family <family>] [--withdrawn]` | The `search_controls` result as JSON, within that framework. |
+| `cyberdrive csf2map map <id> [id ...]` | The `map_control` result as JSON. |
 
 See [cyberdrive.md](cyberdrive.md) for the dataset format, access model and license note.
 

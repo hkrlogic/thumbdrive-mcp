@@ -142,7 +142,7 @@ Text views for Excel, PDF and Word files are not built yet: `format: "text"` say
 
 ## CyberDrive
 
-CyberDrive adds read-only security reference datasets that agents query with cited answers: the MAC address vendor (OUI) database and Microsoft's Windows security audit events catalog.
+CyberDrive adds read-only security reference datasets that agents query with cited answers: the MAC address vendor (OUI) database, Microsoft's Windows security audit events catalog, and NIST SP 800-53 Rev 5, CSF 2.0 and NIST's mapping between them.
 
 | Tool | What it does |
 | --- | --- |
@@ -150,8 +150,11 @@ CyberDrive adds read-only security reference datasets that agents query with cit
 | `search_oui_vendor(query, limit)` | Find prefixes by vendor name |
 | `lookup_windows_event(ids)` | Up to 50 Windows Security log event IDs: category > subcategory, summary, minimum OS and every version's detailed message, with a citation such as `cyberdrive:winevent@v1#4624`; explicit `No match` |
 | `search_windows_events(query, category, limit)` | Text search over summaries and messages, optionally within one audit category |
+| `lookup_control(ids)` | Up to 50 SP 800-53 or CSF 2.0 IDs (`AC-2`, `ac-2(1)`, `AC-2.1`, `PR.AA-01`, `GV.OC`): family or function, title, statement with parameters rendered, discussion, enhancements, related controls, withdrawn status, with a citation such as `cyberdrive:nist80053@v1#AC-2(1)`; explicit `No match` |
+| `search_controls(query, framework, family, include_withdrawn, limit)` | Keyword search over both frameworks, optionally one framework and family |
+| `map_control(ids)` | NIST's CSF 2.0 to SP 800-53 informative references, in both directions |
 
-The datasets are not bundled (the OUI data includes GPLv2 Wireshark and Nmap data; the Windows catalog is Microsoft's download). Import them from **OUI database** and **Windows events** in the web UI (upload, or **Refresh from source**) or with `npm run admin -- cyberdrive oui import` and `cyberdrive winevent import`. The Windows catalog is Microsoft's 2016 list: it does not cover newer Windows 10/11 events or Sysmon. Keys get each dataset's tools only when you grant that dataset; a whole-drive key does not get it automatically. Every lookup is logged. Details, the access model, output format and license note: [docs/cyberdrive.md](docs/cyberdrive.md).
+The datasets are not bundled (the OUI data includes GPLv2 Wireshark and Nmap data; the Windows catalog is Microsoft's download; the NIST files are public domain but large and versioned). Import them from their pages in the web UI (upload, or **Refresh from source**) or with `npm run admin -- cyberdrive <dataset> import` (`oui`, `winevent`, `nist80053`, `csf2`, `csf2map`). The Windows catalog is Microsoft's 2016 list: it does not cover newer Windows 10/11 events or Sysmon. Keys get each dataset's tools only when you grant that dataset; a whole-drive key does not get it automatically. Every lookup is logged. Details, the access model, output format and license note: [docs/cyberdrive.md](docs/cyberdrive.md).
 
 ## Admin CLI
 
@@ -163,12 +166,15 @@ npm run admin -- import <local-folder> <drive-folder>
 npm run admin -- mkdir | rm | ls | history <drive-path>
 npm run admin -- mv <drive-path> <new-drive-path>
 npm run admin -- restore <drive-path> <version>
-npm run admin -- key create <name> [--folder <folder> ...] [--dataset oui|winevent ...]
-npm run admin -- key datasets <name> [oui] [winevent]
+npm run admin -- key create <name> [--folder <folder> ...] [--dataset oui|winevent|nist80053|csf2|csf2map ...]
+npm run admin -- key datasets <name> [dataset ...]
 npm run admin -- cyberdrive oui import [path-or-url] | status
 npm run admin -- cyberdrive oui lookup <mac> ... | search <vendor>
 npm run admin -- cyberdrive winevent import [path-or-url] | status
 npm run admin -- cyberdrive winevent lookup <id> ... | search [text] [--category <category>]
+npm run admin -- cyberdrive nist80053|csf2|csf2map import [path-or-url] | status
+npm run admin -- cyberdrive nist80053|csf2 lookup <id> ... | search [text] [--family <family>] [--withdrawn]
+npm run admin -- cyberdrive csf2map map <id> ...
 npm run admin -- key list | key revoke <name>
 npm run admin -- activity [count]
 npm run admin -- set-password         # prompts, or reads the first line of stdin
