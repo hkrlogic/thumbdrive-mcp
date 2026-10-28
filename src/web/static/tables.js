@@ -129,6 +129,37 @@
     return span;
   }
 
+  /** Marks a cell red when its row's _errors names the column, and returns its content node. */
+  function paint(cell, c) {
+    var el = cell.getElement();
+    var errs = cell.getRow().getData()._errors || {};
+    var err = errs[c.id];
+    el.classList.toggle("cell-bad", !!err);
+    if (err) {
+      el.setAttribute("title", err);
+      el.setAttribute("aria-invalid", "true");
+    } else {
+      el.removeAttribute("title");
+      el.removeAttribute("aria-invalid");
+    }
+    var v = cell.getValue();
+    if (c.type === "checkbox") return textNode(v === true ? "\u2713" : "", err);
+    return textNode(v, err);
+  }
+
+  /** Error flags live in _errors, not in an edited field, so Tabulator will not rerun formatters; repaint directly. */
+  function repaint(row) {
+    row.getCells().forEach(function (cell) {
+      var field = cell.getField();
+      var c = meta.columns.filter(function (x) {
+        return x.id === field;
+      })[0];
+      var el = cell.getElement();
+      if (!c || el.classList.contains("tabulator-editing")) return;
+      el.replaceChildren(paint(cell, c));
+    });
+  }
+
   function colDef(c) {
     var def = {
       title: c.name + (meta.keyColumn === c.id ? " \u2605" : ""),
@@ -140,20 +171,7 @@
       headerTooltip: c.name + " (" + typeName(c.type) + ")" + (meta.keyColumn === c.id ? ", key column" : ""),
       editor: "input",
       formatter: function (cell) {
-        var el = cell.getElement();
-        var errs = cell.getRow().getData()._errors || {};
-        var err = errs[c.id];
-        el.classList.toggle("cell-bad", !!err);
-        if (err) {
-          el.setAttribute("title", err);
-          el.setAttribute("aria-invalid", "true");
-        } else {
-          el.removeAttribute("title");
-          el.removeAttribute("aria-invalid");
-        }
-        var v = cell.getValue();
-        if (c.type === "checkbox") return textNode(v === true ? "\u2713" : "", err);
-        return textNode(v, err);
+        return paint(cell, c);
       },
     };
     if (c.type === "longtext") def.editor = "textarea";
@@ -206,7 +224,11 @@
     setStatus("Saving\u2026");
     return post(host.dataset.edits, edits)
       .then(function (res) {
-        if (res.rows.length) table.updateOrAddData(res.rows.map(toRow));
+        if (res.rows.length) {
+          table.updateOrAddData(res.rows.map(toRow)).then(function (rows) {
+            rows.forEach(repaint);
+          });
+        }
         if (res.deleted && res.deleted.length) table.deleteRow(res.deleted);
         showSummary(res.summary);
         return res;
@@ -423,6 +445,15 @@
     table.on("tableBuilt", function () {
       if (addBtn) addBtn.disabled = false;
       if (delBtn) delBtn.disabled = false;
+      // The focusable scroll holder sits between role=grid and its rows; make it the
+      // rowgroup (and the inner table presentational) so the ARIA grid structure stays valid.
+      var holder = host.querySelector(".tabulator-tableholder");
+      var body = host.querySelector(".tabulator-tableholder > .tabulator-table");
+      if (holder && body) {
+        holder.setAttribute("role", "rowgroup");
+        holder.setAttribute("aria-label", "Rows");
+        body.setAttribute("role", "presentation");
+      }
       showSummary(data.summary);
       setStatus(data.rows.length + " draft row" + (data.rows.length === 1 ? "" : "s") + ". " + statusEl.textContent, data.summary.issues > 0);
     });
@@ -442,6 +473,9 @@
 
   host.addEventListener("keydown", function (e) {
     if (!table || editing()) return;
+    // An Enter that just committed an editor bubbles here after the editor closed; do not reopen it.
+    var tag = e.target && e.target.tagName;
+    if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
     if (e.key === "Enter" || e.key === "F2") {
       var cells = rangeCells();
       if (cells.length) {
@@ -463,10 +497,16 @@
       send({ adds: [{ values: {} }] }).then(function (res) {
         var added = res && res.added && res.added[0];
         if (!added) return;
-        table.scrollToRow(added.id, "bottom", false).catch(function () {});
-        var row = table.getRow(added.id);
         var first = fields()[0];
-        if (row && first) row.getCell(first).edit(true);
+        // Edit only once the new row is rendered; editing a virtual (unrendered) cell breaks Tabulator's cancel.
+        table
+          .scrollToRow(added.id, "bottom", false)
+          .catch(function () {})
+          .then(function () {
+            var row = table.getRow(added.id);
+            var cell = row && first && row.getCell(first);
+            if (cell && cell.getElement() && cell.getElement().isConnected) cell.edit(true);
+          });
       });
     });
   if (delBtn)
