@@ -1,0 +1,50 @@
+name: Python CI
+
+on:
+  push:
+    branches: [thumbdrive-python]
+    paths: ["python/**", ".github/workflows/python-ci.yml"]
+  pull_request:
+    paths: ["python/**", ".github/workflows/python-ci.yml"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: python-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: python
+
+jobs:
+  test:
+    name: Lint and test (Python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      matrix:
+        python: ["3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          python-version: ${{ matrix.python }}
+      - run: uv sync --locked
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+      - run: uv run pytest -q
+
+  docker:
+    name: Docker build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: docker build -t thumbdrive-python:ci .
+      - name: Smoke test the image
+        run: |
+          docker run -d --name td -p 127.0.0.1:8484:8484 thumbdrive-python:ci
+          for i in $(seq 1 30); do curl -fsS http://127.0.0.1:8484/healthz && exit 0; sleep 1; done
+          docker logs td; exit 1

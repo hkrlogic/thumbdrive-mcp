@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}Tables{% endblock %}
+{% block head %}{% include "_tables_head.html" %}{% endblock %}
+{% block main %}
+<h1>Tables</h1>
+<p class="hint">Typed rows such as server inventories or IP plans. Edit the draft in a grid, review, then publish a version.
+Agents only see the latest published version, through the folder access of their key.</p>
+<div class="card">
+<table>
+  <thead><tr><th>Table</th><th>Published</th><th>Draft</th><th></th></tr></thead>
+  <tbody>
+  {% for item in items %}
+  {% set t, latest, s = item.table, item.latest, item.summary %}
+  <tr>
+    <td><a href="/tables/{{ t.id }}">{{ t.path }}</a>{% if t.description %}<br><span class="hint">{{ t.description }}</span>{% endif %}</td>
+    <td>{% if latest %}v{{ latest.version }} · {{ latest.row_count }} rows · {{ latest.published_at[:16].replace("T", " ") }} UTC{% else %}<span class="hint">never</span>{% endif %}</td>
+    <td class="diff-counts">
+      {% if s.added or s.changed or s.removed or s.columns %}
+      <span class="badge ok">+{{ s.added }}</span><span class="badge accent">~{{ s.changed }}</span><span class="badge danger">−{{ s.removed }}</span>
+      {% if s.columns %}<span class="badge">{{ s.columns }} column change(s)</span>{% endif %}
+      {% else %}<span class="hint">no changes</span>{% endif %}
+      {% if s.issues %}<span class="badge danger">{{ s.issues }} problem(s)</span>{% endif %}
+    </td>
+    <td class="row-actions"><a href="/tables/{{ t.id }}/review">Review</a><a href="/tables/{{ t.id }}/versions">Versions</a></td>
+  </tr>
+  {% else %}
+  <tr><td colspan="4" class="hint">No tables yet.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+<div class="actions">
+  <form method="post" action="/tables/create" class="card">
+    <h2>New table</h2>
+    <input type="hidden" name="_csrf" value="{{ csrf }}">
+    <label>Folder <input name="folder" value="/" required></label>
+    <label>Name <input name="name" placeholder="servers" required></label>
+    <label>Start from
+      <select name="template">
+        <option value="">Blank table</option>
+        {% for id, tpl in templates.items() %}<option value="{{ id }}">{{ tpl.label }}</option>{% endfor %}
+      </select>
+    </label>
+    <button class="primary">Create</button>
+  </form>
+  <form method="post" action="/tables/import" enctype="multipart/form-data" class="card">
+    <h2>Import CSV</h2>
+    <input type="hidden" name="_csrf" value="{{ csrf }}">
+    <label>Folder <input name="folder" value="/" required></label>
+    <label>Name <input name="name" placeholder="servers" required></label>
+    <label>CSV file (UTF-8, first row is the header) <input type="file" name="file" accept=".csv,.tsv,.txt" required></label>
+    <p class="hint">Excel: File › Save As › CSV UTF-8. Up to {{ max_rows }} rows. You pick column types next.</p>
+    <button class="primary">Upload and preview</button>
+  </form>
+</div>
+{% endblock %}

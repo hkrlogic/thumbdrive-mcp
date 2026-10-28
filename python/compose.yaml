@@ -1,0 +1,15 @@
+# Example: docker compose up --build, then open http://127.0.0.1:8484/setup
+services:
+  thumbdrive:
+    build: .
+    ports:
+      - "127.0.0.1:8484:8484"   # loopback only; put Caddy or Traefik in front for HTTPS
+    environment:
+      # THUMBDRIVE_ADMIN_PASSWORD: change-me      # optional; otherwise use /setup
+      # THUMBDRIVE_PUBLIC_URL: https://drive.example.com
+      ALLOWED_HOSTS: ""
+    volumes:
+      - thumbdrive-data:/data
+    restart: unless-stopped
+volumes:
+  thumbdrive-data:

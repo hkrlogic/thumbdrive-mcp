@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}{{ table.path }} v{{ version.version }}{% endblock %}
+{% block main %}
+<h1>{{ table.path }} v{{ version.version }}</h1>
+<p><a href="/tables/{{ table.id }}/versions">Back to versions</a> · {{ version.note }} · Agents cite rows as <code>thumbdrive:{{ table.path }}@v{{ version.version }}#r&lt;id&gt;</code></p>
+<div class="scroll-x">
+<table>
+  <thead><tr><th>#</th>{% for c in version.columns %}<th>{{ c.name }}{% if c.id == version.key_column %} ★{% endif %}</th>{% endfor %}</tr></thead>
+  <tbody>
+  {% for row_id, data in rows %}
+  <tr><td>{{ row_id }}</td>{% for c in version.columns %}<td>{{ data.get(c.id, "") if data.get(c.id) is not none else "" }}</td>{% endfor %}</tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% if total > rows | length %}<p class="hint">Showing the first {{ rows | length }} of {{ total }} rows.</p>{% endif %}
+{% endblock %}

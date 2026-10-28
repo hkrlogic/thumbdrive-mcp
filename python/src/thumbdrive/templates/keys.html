@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}Agent keys{% endblock %}
+{% block main %}
+<h1>Agent keys</h1>
+<p>MCP address: <code>{{ mcp_url }}</code>. A key reads only its folders; everything else answers "Not found".</p>
+
+{% if new_key %}
+<section class="card new-key">
+  <h2>Key "{{ new_name }}" created</h2>
+  <p><strong>Copy it now. It is not shown again.</strong></p>
+  <pre class="copyable">{{ new_key }}</pre>
+  {% for label, hint, code in snippets %}
+  <h3>{{ label }}</h3>
+  <p class="hint">{{ hint }}</p>
+  <pre class="copyable">{{ code }}</pre>
+  {% endfor %}
+</section>
+{% endif %}
+
+<form method="post" action="/keys/create" class="card">
+  <h2>New key</h2>
+  <input type="hidden" name="_csrf" value="{{ csrf }}">
+  <label>Name <input name="name" required maxlength="100" placeholder="e.g. cursor-laptop"></label>
+  <fieldset>
+    <legend>Folders it can read</legend>
+    {% for f in folders %}<label class="check"><input type="checkbox" name="folders" value="{{ f }}"> {{ f }}{% if f == "/" %} (everything){% endif %}</label>{% endfor %}
+  </fieldset>
+  <button class="primary">Create key</button>
+</form>
+
+<table>
+  <thead><tr><th>Name</th><th>Key</th><th>Folders</th><th>Created</th><th>Last used</th><th></th></tr></thead>
+  <tbody>
+  {% for k in keys %}
+  <tr class="{{ 'revoked' if k.revoked_at else '' }}">
+    <td>{{ k.name }}</td><td><code>{{ k.prefix }}…</code></td><td>{{ k.folders | join(", ") }}</td>
+    <td>{{ k.created_at[:10] }}</td><td>{{ (k.last_used_at or "never")[:16].replace("T", " ") }}</td>
+    <td>
+      {% if k.revoked_at %}revoked {{ k.revoked_at[:10] }}{% else %}
+      <form method="post" action="/keys/revoke" class="inline" data-confirm="Revoke {{ k.name }}? Agents using it lose access at once.">
+        <input type="hidden" name="_csrf" value="{{ csrf }}">
+        <input type="hidden" name="id" value="{{ k.id }}">
+        <button class="danger">Revoke</button>
+      </form>
+      {% endif %}
+    </td>
+  </tr>
+  {% else %}
+  <tr><td colspan="6">No keys yet.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

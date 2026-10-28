@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Import {{ path }}{% endblock %}
+{% block head %}<link rel="stylesheet" href="/static/tables.css">{% endblock %}
+{% block main %}
+<h1>Import into {{ path }}</h1>
+<p class="hint">{{ row_count }} rows found. Check each column's type (suggested from the header and the values) and pick a key.
+The rows become a draft: invalid values are kept and shown in red until fixed.</p>
+<form method="post" action="/tables/import/confirm" class="card">
+  <input type="hidden" name="_csrf" value="{{ csrf }}">
+  <input type="hidden" name="token" value="{{ token }}">
+  <table>
+    <thead><tr><th>Column</th><th>Type</th><th>Key</th><th>Sample values</th></tr></thead>
+    <tbody>
+    {% for c in columns %}
+    <tr>
+      <td>{{ c.name }}</td>
+      <td><select name="type_{{ loop.index0 }}" aria-label="Type of {{ c.name }}">
+        {% for id, label in types.items() %}<option value="{{ id }}" {% if id == c.type %}selected{% endif %}>{{ label }}</option>{% endfor %}
+        <option value="skip">Skip this column</option>
+      </select></td>
+      <td><input type="radio" name="key" value="{{ loop.index0 }}" aria-label="{{ c.name }} is the key" {% if loop.first and c.type in key_types %}checked{% endif %}></td>
+      <td class="sample">{{ c.sample | join(" · ") }}</td>
+    </tr>
+    {% endfor %}
+    <tr><td colspan="2" class="hint">No key column</td><td><input type="radio" name="key" value="" aria-label="No key column"></td><td></td></tr>
+    </tbody>
+  </table>
+  <p><button class="primary">Create draft table</button> <a href="/tables">Cancel</a></p>
+</form>
+{% endblock %}

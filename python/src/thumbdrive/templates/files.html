@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block title %}Files{% endblock %}
+{% block main %}
+<h1>{% for label, href in crumbs %}<a href="/files?path={{ href | urlencode }}">{{ label }}</a>{% if not loop.last %} / {% endif %}{% endfor %}</h1>
+
+<div class="actions">
+  <form method="post" action="/files/upload" enctype="multipart/form-data">
+    <input type="hidden" name="_csrf" value="{{ csrf }}">
+    <input type="hidden" name="path" value="{{ folder }}">
+    <input type="file" name="files" multiple required>
+    <button class="primary">Upload</button>
+  </form>
+  <form method="post" action="/files/mkdir">
+    <input type="hidden" name="_csrf" value="{{ csrf }}">
+    <input type="hidden" name="path" value="{{ folder }}">
+    <input name="name" placeholder="New folder name" required>
+    <button>Create folder</button>
+  </form>
+</div>
+
+<table>
+  <thead><tr><th>Name</th><th>Size</th><th>SHA-256</th><th>Modified (UTC)</th><th></th></tr></thead>
+  <tbody>
+  {% if folder != "/" %}<tr><td colspan="5"><a href="/files?path={{ parent | urlencode }}">↑ Up</a></td></tr>{% endif %}
+  {% for e in entries %}
+  <tr>
+    <td>{% if e.type == "folder" %}📁 <a href="/files?path={{ e.path | urlencode }}">{{ e.name }}</a>{% else %}<a href="/files/download?path={{ e.path | urlencode }}">{{ e.name }}</a>{% endif %}</td>
+    <td>{{ e.size if e.size is not none else "" }}</td>
+    <td><code title="{{ e.sha256 or '' }}">{{ (e.sha256 or "")[:12] }}</code></td>
+    <td>{{ e.modified[:16].replace("T", " ") }}</td>
+    <td class="row-actions">
+      {% if e.type == "file" %}<a href="/files/history?path={{ e.path | urlencode }}">Versions</a>{% endif %}
+      <details>
+        <summary>Rename</summary>
+        <form method="post" action="/files/rename">
+          <input type="hidden" name="_csrf" value="{{ csrf }}">
+          <input type="hidden" name="path" value="{{ e.path }}">
+          <input name="new_path" value="{{ e.path }}" required>
+          <button>Save</button>
+        </form>
+      </details>
+      <form method="post" action="/files/delete" class="inline" data-confirm="Delete {{ e.path }}{{ ' and everything in it' if e.type == 'folder' else '' }}? Versions are kept.">
+        <input type="hidden" name="_csrf" value="{{ csrf }}">
+        <input type="hidden" name="path" value="{{ e.path }}">
+        <button class="danger">Delete</button>
+      </form>
+    </td>
+  </tr>
+  {% else %}
+  <tr><td colspan="5">This folder is empty.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+{% if deleted %}
+<h2>Deleted here</h2>
+<ul>{% for p in deleted %}<li><a href="/files/history?path={{ p | urlencode }}">{{ p }}</a></li>{% endfor %}</ul>
+{% endif %}
+{% endblock %}
