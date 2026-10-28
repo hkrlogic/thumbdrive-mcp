@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Versions{% endblock %}
+{% block main %}
+<h1>Versions of {{ path }}</h1>
+<p><a href="/files?path={{ parent | urlencode }}">Back to folder</a></p>
+<table>
+  <thead><tr><th>Version</th><th>Action</th><th>Size</th><th>SHA-256</th><th>By</th><th>When (UTC)</th><th></th></tr></thead>
+  <tbody>
+  {% for v in versions %}
+  <tr>
+    <td>{{ v.version }}</td><td>{{ v.action }}</td><td>{{ v.size if v.size is not none else "" }}</td>
+    <td><code title="{{ v.sha256 or '' }}">{{ (v.sha256 or "")[:12] }}</code></td>
+    <td>{{ v.actor }}</td><td>{{ v.created_at[:16].replace("T", " ") }}</td>
+    <td class="row-actions">
+      {% if v.action == "put" %}
+      <a href="/files/download?path={{ path | urlencode }}&amp;version={{ v.version }}">Download</a>
+      {% if not loop.first %}
+      <form method="post" action="/files/restore" class="inline">
+        <input type="hidden" name="_csrf" value="{{ csrf }}">
+        <input type="hidden" name="path" value="{{ path }}">
+        <input type="hidden" name="version" value="{{ v.version }}">
+        <button>Restore</button>
+      </form>
+      {% endif %}
+      {% endif %}
+    </td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

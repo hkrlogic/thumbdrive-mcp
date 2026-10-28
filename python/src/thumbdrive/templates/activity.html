@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Activity{% endblock %}
+{% block main %}
+<h1>Activity</h1>
+<form method="get" action="/activity" class="actions">
+  <label>Show
+    <select name="who">
+      <option value="agents" {{ "selected" if who == "agents" }}>All agent reads</option>
+      <option value="all" {{ "selected" if who == "all" }}>Everything (agents and admin)</option>
+      {% for a in actors %}<option value="{{ a }}" {{ "selected" if who == a }}>{{ a }}</option>{% endfor %}
+    </select>
+  </label>
+  <button>Filter</button>
+</form>
+<table>
+  <thead><tr><th>When (UTC)</th><th>Who</th><th>Action</th><th>Path</th><th>Detail</th></tr></thead>
+  <tbody>
+  {% for r in rows %}
+  <tr><td>{{ r.at[:19].replace("T", " ") }}</td><td>{{ r.actor }}</td><td>{{ r.action }}</td><td>{{ r.path or "" }}</td><td>{{ r.detail or "" }}</td></tr>
+  {% else %}
+  <tr><td colspan="5">Nothing yet.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}
